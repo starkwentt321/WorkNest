@@ -1,0 +1,8 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 浅色主题 = 浅色调色板 + 公共控件样式（默认主题，决策 30） -->
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="/Themes/Palette.Light.xaml"/>
+        <ResourceDictionary Source="/Themes/Controls.xaml"/>
+    </ResourceDictionary.MergedDictionaries>
+</ResourceDictionary>

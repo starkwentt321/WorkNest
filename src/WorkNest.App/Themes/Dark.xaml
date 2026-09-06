@@ -1,0 +1,8 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 深色主题 = 深色调色板 + 公共控件样式（键位与浅色一致，决策 13/18） -->
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="/Themes/Palette.Dark.xaml"/>
+        <ResourceDictionary Source="/Themes/Controls.xaml"/>
+    </ResourceDictionary.MergedDictionaries>
+</ResourceDictionary>

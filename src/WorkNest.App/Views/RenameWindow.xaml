@@ -1,0 +1,37 @@
+<Window x:Class="WorkNest.App.Views.RenameWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="重命名"
+        Icon="/WorkNest;component/Assets/app.ico"
+        Width="400" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        FontFamily="{DynamicResource AppFont}"
+        FontSize="12"
+        Background="{DynamicResource Bg}"
+        Foreground="{DynamicResource Fg}"
+        UseLayoutRounding="True">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/Themes/Light.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Window.Resources>
+    <StackPanel Margin="16">
+        <TextBlock x:Name="PromptText" Text="输入新名称" Foreground="{DynamicResource FgSecondary}"
+                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"/>
+        <TextBox x:Name="NameBox" Margin="0,10,0,0" MinHeight="30"
+                 AutomationProperties.Name="新名称"/>
+        <TextBlock x:Name="ErrorText" Margin="0,8,0,0" Foreground="{DynamicResource ErrorFg}"
+                   TextWrapping="Wrap" Visibility="Collapsed"/>
+        <DockPanel Margin="0,16,0,0" LastChildFill="False">
+            <Button Content="确定" Width="72" MinHeight="28" DockPanel.Dock="Right" Margin="8,0,0,0"
+                    Style="{StaticResource AccentButtonStyle}"
+                    IsDefault="True" Click="Ok_Click"/>
+            <Button Content="取消" Width="72" MinHeight="28" DockPanel.Dock="Right"
+                    IsCancel="True" Click="Cancel_Click"/>
+        </DockPanel>
+    </StackPanel>
+</Window>

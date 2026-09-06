@@ -1,0 +1,13 @@
+<Project>
+  <!-- 全解决方案公共属性：依赖版本在各 csproj 中显式锁定 -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>0.1.0</Version>
+    <Product>WorkNest</Product>
+    <Authors>WorkNest</Authors>
+    <!-- 首版界面为中文，不生成多余资源语言目录 -->
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>

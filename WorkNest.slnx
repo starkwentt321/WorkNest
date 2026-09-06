@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WorkNest.App/WorkNest.App.csproj" />
+    <Project Path="src/WorkNest.Application/WorkNest.Application.csproj" />
+    <Project Path="src/WorkNest.Domain/WorkNest.Domain.csproj" />
+    <Project Path="src/WorkNest.Infrastructure/WorkNest.Infrastructure.csproj" />
+    <Project Path="src/WorkNest.Platform.Windows/WorkNest.Platform.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/WorkNest.App.Tests/WorkNest.App.Tests.csproj" />
+    <Project Path="tests/WorkNest.IntegrationTests/WorkNest.IntegrationTests.csproj" />
+    <Project Path="tests/WorkNest.Tests/WorkNest.Tests.csproj" />
+  </Folder>
+</Solution>

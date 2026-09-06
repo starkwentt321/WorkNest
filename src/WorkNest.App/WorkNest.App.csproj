@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- WPF 壳层：窗口、ViewModel、主题与组合根 -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>WorkNest.App</RootNamespace>
+    <AssemblyName>WorkNest</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- exe 内嵌图标：资源管理器/任务栏钉选/桌面快捷方式显示 -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 窗口 Icon 经 pack URI 引用，需打包为 Resource -->
+    <Resource Include="Assets\app.ico" />
+    <Resource Include="Assets\DefaultBackground.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WorkNest.Application\WorkNest.Application.csproj" />
+    <ProjectReference Include="..\WorkNest.Infrastructure\WorkNest.Infrastructure.csproj" />
+    <ProjectReference Include="..\WorkNest.Platform.Windows\WorkNest.Platform.Windows.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,199 @@
+<Window x:Class="WorkNest.App.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:WorkNest.App.Converters"
+        Title="设置"
+        Icon="/WorkNest;component/Assets/app.ico"
+        Width="460" Height="640"
+        MinWidth="400" MinHeight="480"
+        WindowStartupLocation="CenterOwner"
+        FontFamily="{DynamicResource AppFont}"
+        FontSize="12"
+        Background="{DynamicResource Bg}"
+        Foreground="{DynamicResource Fg}"
+        UseLayoutRounding="True">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/Themes/Light.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <conv:InverseBoolConverter x:Key="InverseBool"/>
+            <!-- 分组卡片 -->
+            <Style x:Key="GroupCard" TargetType="Border">
+                <Setter Property="Background" Value="{DynamicResource Card}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource Border}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="5"/>
+                <Setter Property="Padding" Value="12,10"/>
+                <Setter Property="Margin" Value="0,0,0,12"/>
+            </Style>
+            <Style x:Key="GroupTitle" TargetType="TextBlock">
+                <Setter Property="FontWeight" Value="Bold"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Margin" Value="0,2,0,8"/>
+            </Style>
+            <Style x:Key="MutedText" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{DynamicResource FgSecondary}"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Margin="14,12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+
+                <!-- ===== 常规（决策 3/82） ===== -->
+                <Border Style="{StaticResource GroupCard}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource GroupTitle}" Text="常规"/>
+                        <TextBlock Text="关闭窗口时：" Margin="0,0,0,4"/>
+                        <RadioButton Content="隐藏到托盘，后台常驻" GroupName="CloseBehavior" Margin="8,0,0,4"
+                                     IsChecked="{Binding CloseToTray, UpdateSourceTrigger=PropertyChanged}"/>
+                        <RadioButton Content="直接退出程序" GroupName="CloseBehavior" Margin="8,0,0,8"
+                                     IsChecked="{Binding CloseToTray, Converter={StaticResource InverseBool}, UpdateSourceTrigger=PropertyChanged}"/>
+                        <CheckBox Content="开机自动启动（当前 Windows 用户）" IsChecked="{Binding Autostart, UpdateSourceTrigger=PropertyChanged}"
+                                  ToolTip="安装后默认关闭，可随时撤销（决策 9/82）"/>
+                        <CheckBox Content="双击文件夹在应用内浏览子目录和文件" IsChecked="{Binding FolderInlineBrowse, UpdateSourceTrigger=PropertyChanged}"
+                                  Margin="0,8,0,0"
+                                  ToolTip="开启后双击目录资源在本窗口内逐级浏览；关闭（默认）时双击仍用系统资源管理器打开。右键“打开”始终用资源管理器。"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== 外观（决策 13/18/30） ===== -->
+                <Border Style="{StaticResource GroupCard}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource GroupTitle}" Text="外观"/>
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" Text="主题" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <ComboBox Width="140" HorizontalAlignment="Left"
+                                      ItemsSource="{Binding ThemeOptions}"
+                                      SelectedValuePath="Key"
+                                      DisplayMemberPath="Value"
+                                      SelectedValue="{Binding Theme, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DockPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource GroupCard}"
+                        DataContext="{Binding BackgroundSettings, RelativeSource={RelativeSource AncestorType=Window}}">
+                    <StackPanel IsEnabled="{Binding ApplyCommand.IsRunning, Converter={StaticResource InverseBool}}">
+                        <TextBlock Style="{StaticResource GroupTitle}" Text="背景图片"/>
+                        <TextBlock Style="{StaticResource MutedText}" Text="图片按比例显示在主窗口右下角。留空使用内置默认图片。"/>
+                        <TextBox Text="{Binding ImagePath, UpdateSourceTrigger=PropertyChanged}" Margin="0,8,0,6"
+                                 AutomationProperties.Name="背景图片路径"/>
+                        <WrapPanel>
+                            <Button Content="选择图片…" Click="ChooseBackground_Click"/>
+                            <Button Content="恢复默认" Command="{Binding ResetCommand}" Margin="8,0,0,0"/>
+                        </WrapPanel>
+                        <TextBlock Text="{Binding Transparency, StringFormat='透明度：{0:0}%'}" Margin="0,12,0,4"/>
+                        <Slider Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                                Value="{Binding Transparency, UpdateSourceTrigger=PropertyChanged}"
+                                AutomationProperties.Name="背景透明度"/>
+                        <TextBlock Style="{StaticResource MutedText}" Text="0% 完全显示，100% 完全透明。只调整背景图片。" Margin="0,4,0,8"/>
+                        <Button Content="应用背景" Command="{Binding ApplyCommand}" HorizontalAlignment="Left"/>
+                        <TextBlock Style="{StaticResource MutedText}" Text="{Binding StatusText}" Margin="0,6,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== 快捷键（F10/决策 12/8.2：可配置，冲突时托盘兜底） ===== -->
+                <Border Style="{StaticResource GroupCard}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource GroupTitle}" Text="快捷键"/>
+                        <WrapPanel Margin="0,0,0,6">
+                            <CheckBox Content="Ctrl" IsChecked="{Binding HotkeyCtrl}" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                            <CheckBox Content="Alt" IsChecked="{Binding HotkeyAlt}" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                            <CheckBox Content="Shift" IsChecked="{Binding HotkeyShift}" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                            <CheckBox Content="Win" IsChecked="{Binding HotkeyWin}" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                            <ComboBox Width="72" ItemsSource="{Binding HotkeyKeyOptions}" SelectedItem="{Binding HotkeyKeyDisplay}"
+                                      ToolTip="主键位" AutomationProperties.Name="快捷键主键位"/>
+                        </WrapPanel>
+                        <DockPanel Margin="0,0,0,6">
+                            <TextBlock DockPanel.Dock="Left" Text="当前组合：" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <Border Background="{DynamicResource Input}" BorderBrush="{DynamicResource Border}" BorderThickness="1"
+                                    CornerRadius="4" Padding="8,3" HorizontalAlignment="Left">
+                                <TextBlock Text="{Binding HotkeyPreview}" FontFamily="Consolas"/>
+                            </Border>
+                        </DockPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="应用" Width="72" Style="{StaticResource AccentButtonStyle}"
+                                    Command="{Binding ApplyHotkeyCommand}" ToolTip="注册并保存当前组合"/>
+                            <Button Content="恢复默认" Width="72" Margin="8,0,0,0"
+                                    Command="{Binding ResetHotkeyCommand}" ToolTip="恢复为 Ctrl+Alt+W"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding HotkeyStatusText}" Style="{StaticResource MutedText}" Margin="0,6,0,0"/>
+                        <TextBlock Style="{StaticResource MutedText}" Margin="0,4,0,0"
+                                   Text="默认 Ctrl+Alt+W 呼出/前台化主窗口；若被其他程序占用，托盘入口仍可用，更换组合后点“应用”即可。"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== 数据与备份（决策 65/76/100 + F11） ===== -->
+                <Border Style="{StaticResource GroupCard}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource GroupTitle}" Text="数据与备份"/>
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="立即备份" Command="{Binding BackupNowCommand}" ToolTip="创建当前数据库快照"/>
+                            <Button Content="恢复选中" Margin="8,0,0,0" Command="{Binding RestoreBackupCommand}"
+                                    ToolTip="用所选备份覆盖当前数据（先自动快照，完成后应用重启）"/>
+                            <Button Content="刷新" Margin="8,0,0,0" Command="{Binding RefreshBackupsCommand}" ToolTip="重新读取备份列表"/>
+                            <Button Content="导出配置…" Margin="8,0,0,0" Command="{Binding ExportCommand}"
+                                    ToolTip="把工作区配置导出为 JSON（F11）"/>
+                            <Button Content="导入配置…" Margin="8,0,0,0" Command="{Binding ImportCommand}"
+                                    ToolTip="从导出的 JSON 文件导入（先预览）"/>
+                        </WrapPanel>
+                        <ListView ItemsSource="{Binding Backups}" SelectedItem="{Binding SelectedBackup}"
+                                  Height="132" HorizontalContentAlignment="Stretch"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                  ToolTip="自动与手动备份（保留最近 10 份，决策 66）">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Header="时间" Width="132"
+                                                    DisplayMemberBinding="{Binding CreatedAt, StringFormat='yyyy-MM-dd HH:mm:ss'}"/>
+                                    <GridViewColumn Header="原因" Width="96" DisplayMemberBinding="{Binding Reason}"/>
+                                    <GridViewColumn Header="大小（字节）" Width="88"
+                                                    DisplayMemberBinding="{Binding SizeBytes, StringFormat=N0}"/>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+                        <WrapPanel Margin="0,8,0,0">
+                            <Button Content="打开数据目录" Command="{Binding OpenDataCommand}"/>
+                            <Button Content="打开日志目录" Margin="8,0,0,0" Command="{Binding OpenLogsCommand}"/>
+                        </WrapPanel>
+                        <TextBlock Text="{Binding BackupResultText}" Style="{StaticResource MutedText}" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- ===== 关于 ===== -->
+                <Border Style="{StaticResource GroupCard}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource GroupTitle}" Text="关于"/>
+                        <TextBlock Text="{Binding VersionDisplay}" FontWeight="Bold"/>
+                        <TextBlock Style="{StaticResource MutedText}" Margin="0,4,0,0"
+                                   Text="Windows 常驻工作区导航器：以工作区组织常用目录、文件、程序与网站，Everything 风格紧凑列表，双击即达。日志仅留本机，可能包含敏感路径（8.3）。"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 窗口内错误提示（决策 89） -->
+                <TextBlock Text="{Binding ErrorText}" Foreground="{DynamicResource ErrorFg}" TextWrapping="Wrap" Margin="2,0,0,8">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ErrorText}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Button Grid.Row="1" Content="关闭" Width="72" HorizontalAlignment="Right" IsCancel="True"/>
+    </Grid>
+</Window>

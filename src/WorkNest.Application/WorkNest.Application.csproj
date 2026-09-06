@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 应用层：用例服务、DTO 与平台抽象；只依赖 Domain，不决定 UI 与数据库实现 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WorkNest.Domain\WorkNest.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

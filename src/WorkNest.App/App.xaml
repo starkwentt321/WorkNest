@@ -1,0 +1,8 @@
+<Application x:Class="WorkNest.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+  <!-- 常驻应用：关闭窗口可能只是隐藏到托盘，故使用显式关闭模式 -->
+  <Application.Resources>
+  </Application.Resources>
+</Application>

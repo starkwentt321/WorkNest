@@ -1,0 +1,475 @@
+<Window x:Class="WorkNest.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:WorkNest.App.Converters"
+        Title="WorkNest"
+        Icon="Assets/app.ico"
+        Width="600" Height="720"
+        MinWidth="320" MaxWidth="800" MinHeight="480"
+        FontFamily="{DynamicResource AppFont}"
+        FontSize="12"
+        Background="{DynamicResource Bg}"
+        Foreground="{DynamicResource Fg}"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display">
+    <!-- 侧边工具栏窗口（决策 14/22/103）：默认 600×720（应用内浏览工具行需要），宽 320–800，高 ≥480 -->
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/Themes/Light.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <conv:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis"/>
+            <conv:NullToVisibleConverter x:Key="NullToVis"/>
+            <conv:PinMenuHeaderConverter x:Key="PinMenuHeader"/>
+            <conv:ColorToBrushConverter x:Key="ColorToBrush"/>
+            <conv:InverseBoolConverter x:Key="InverseBool"/>
+            <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid ClipToBounds="True">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <!-- F24：上次异常退出提示行（决策 99/102） -->
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 背景位于内容下层，不参与命中测试，文字和选择状态保持原有透明度。 -->
+        <Image Grid.RowSpan="5" MaxWidth="300" MaxHeight="300" Stretch="Uniform"
+               HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False"
+               Source="{Binding BackgroundSettings.Source, RelativeSource={RelativeSource AncestorType=Window}}"
+               Opacity="{Binding BackgroundSettings.Opacity, RelativeSource={RelativeSource AncestorType=Window}}"/>
+
+        <!-- ===== 顶部栏：工作区下拉 → 搜索 → 新增 → 置顶 → 设置（决策 108） ===== -->
+        <DockPanel Grid.Row="0" Margin="8,8,8,6" LastChildFill="True">
+            <Button DockPanel.Dock="Right" Style="{StaticResource IconToolButtonStyle}" Width="28" Height="26"
+                    Click="SettingsButton_Click" ToolTip="设置" AutomationProperties.Name="设置">
+                <TextBlock Text="&#xE713;" FontFamily="{StaticResource AppIconFont}" FontSize="14"/>
+            </Button>
+            <Button DockPanel.Dock="Right" Style="{StaticResource IconToolButtonStyle}" Width="28" Height="26"
+                    Command="{Binding TogglePinCommand}" ToolTip="置顶 / 取消置顶（选中项）" AutomationProperties.Name="置顶选中项">
+                <TextBlock Text="&#xE718;" FontFamily="{StaticResource AppIconFont}" FontSize="14"/>
+            </Button>
+            <Button DockPanel.Dock="Right" Style="{StaticResource IconToolButtonStyle}" Width="28" Height="26"
+                    Click="AddButton_Click" ToolTip="新增资源（文件 / 文件夹 / 网址）" AutomationProperties.Name="新增资源">
+                <TextBlock Text="&#xE710;" FontFamily="{StaticResource AppIconFont}" FontSize="14"/>
+                <Button.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="选择文件…" Command="{Binding AddFileCommand}"/>
+                        <MenuItem Header="选择文件夹…" Command="{Binding AddFolderCommand}"/>
+                        <MenuItem Header="输入网址…" Command="{Binding AddWebsiteCommand}"/>
+                    </ContextMenu>
+                </Button.ContextMenu>
+            </Button>
+
+            <!-- 按名称自动加宽；限制上限以保留搜索空间，超长名称可悬停查看。 -->
+            <ComboBox x:Name="WorkspaceCombo" DockPanel.Dock="Left" MinWidth="96" MaxWidth="180"
+                      ItemsSource="{Binding WorkspaceOptions}"
+                      SelectedItem="{Binding CurrentWorkspaceOption, Mode=TwoWay}"
+                      ToolTip="{Binding CurrentWorkspaceOption.Name}">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid Width="12" Height="12" VerticalAlignment="Center">
+                                <!-- 普通工作区=色块；管理项=齿轮；最近使用项=历史字形（决策 34/44） -->
+                                <Border Width="12" Height="12" CornerRadius="3"
+                                        Background="{Binding Color, Converter={StaticResource ColorToBrush}}"
+                                        Visibility="{Binding IsSpecialItem, Converter={StaticResource InverseBoolToVis}}"/>
+                                <TextBlock Text="&#xE713;" FontFamily="{StaticResource AppIconFont}" FontSize="10"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Visibility="{Binding IsManageItem, Converter={StaticResource BoolToVis}}"/>
+                                <TextBlock Text="&#xE823;" FontFamily="{StaticResource AppIconFont}" FontSize="10"
+                                           Foreground="{DynamicResource Accent}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Visibility="{Binding IsRecentItem, Converter={StaticResource BoolToVis}}"/>
+                            </Grid>
+                            <TextBlock Grid.Column="1" Text="{Binding Name}" ToolTip="{Binding Name}"
+                                       Margin="6,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        </Grid>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+                <ComboBox.ItemContainerStyle>
+                    <Style TargetType="ComboBoxItem" BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+                        <Style.Triggers>
+                            <!-- 特殊项（最近使用 / 管理工作区）前加分隔线 -->
+                            <DataTrigger Binding="{Binding IsSpecialItem}" Value="True">
+                                <Setter Property="BorderBrush" Value="{DynamicResource MenuSeparator}"/>
+                                <Setter Property="BorderThickness" Value="0,1,0,0"/>
+                                <Setter Property="Margin" Value="0,3,0,0"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ComboBox.ItemContainerStyle>
+            </ComboBox>
+
+            <!-- 搜索框 + 范围切换（决策 27/48/55）；最近使用视图固定当前工作区范围，禁用“全部” -->
+            <DockPanel Margin="8,0,0,0" LastChildFill="True">
+                <CheckBox DockPanel.Dock="Right" Content="全部" IsChecked="{Binding SearchAll}" VerticalAlignment="Center"
+                          Margin="6,0,0,0" ToolTip="搜索全部工作区"
+                          IsEnabled="{Binding IsRecentView, Converter={StaticResource InverseBool}}"/>
+                <Grid>
+                    <TextBox x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
+                    <TextBlock Text="搜索名称/标签/路径" Margin="9,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource FgSecondary}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+            </DockPanel>
+        </DockPanel>
+
+        <!-- ===== F24 异常退出提示横幅（决策 99/102：窗口内提示 + 打开日志目录 + 可关闭，不吓人样式） ===== -->
+        <Border Grid.Row="1" Background="{DynamicResource Card}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,1"
+                Padding="10,5" Visibility="{Binding ShowAbnormalExitNotice, Converter={StaticResource BoolToVis}}">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Style="{StaticResource IconToolButtonStyle}" Width="20" Height="20"
+                        Command="{Binding CloseAbnormalNoticeCommand}" ToolTip="关闭提示" AutomationProperties.Name="关闭异常退出提示">
+                    <TextBlock Text="&#xE711;" FontFamily="{StaticResource AppIconFont}" FontSize="10"/>
+                </Button>
+                <Button DockPanel.Dock="Right" Margin="4,0,6,0" Padding="8,2"
+                        Command="{Binding OpenAbnormalLogFolderCommand}" ToolTip="打开日志目录">
+                    <TextBlock Text="打开日志目录"/>
+                </Button>
+                <TextBlock Text="上次未正常退出（可能是崩溃或断电）。本次已正常启动；如需排查原因可打开日志目录。"
+                           TextWrapping="Wrap" VerticalAlignment="Center"/>
+            </DockPanel>
+        </Border>
+
+        <!-- ===== 错误横幅（决策 89：普通错误窗口内提示） ===== -->
+        <Border Grid.Row="2" Background="{DynamicResource ErrorBg}" BorderBrush="{DynamicResource ErrorBorder}" BorderThickness="0,1,0,1"
+                Padding="10,5" Visibility="{Binding HasError, Converter={StaticResource BoolToVis}}">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Style="{StaticResource IconToolButtonStyle}" Width="20" Height="20"
+                        Command="{Binding ClearErrorCommand}" ToolTip="关闭提示">
+                    <TextBlock Text="&#xE711;" FontFamily="{StaticResource AppIconFont}" FontSize="10"/>
+                </Button>
+                <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource ErrorFg}" TextWrapping="Wrap"
+                           VerticalAlignment="Center" Margin="0,0,6,0"/>
+            </DockPanel>
+        </Border>
+
+        <!-- ===== 主体：资源列表 / 编辑面板（同一区域替换，决策 71） ===== -->
+        <Grid Grid.Row="3">
+            <!-- 资源列表（Everything 风格紧凑列表，决策 28/35/109） -->
+            <ListView x:Name="ResourceList"
+                      ItemsSource="{Binding Resources}"
+                      SelectedItem="{Binding SelectedResource}"
+                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                      VirtualizingPanel.VirtualizationMode="Recycling"
+                      AllowDrop="True"
+                      DragOver="ResourceList_DragOver"
+                      PreviewMouseLeftButtonDown="ResourceList_PreviewMouseLeftButtonDown"
+                      PreviewMouseMove="ResourceList_PreviewMouseMove"
+                      MouseDoubleClick="ResourceList_MouseDoubleClick"
+                      Drop="ResourceList_Drop">
+                <ListView.Style>
+                    <Style TargetType="ListView" BasedOn="{StaticResource {x:Type ListView}}">
+                        <Style.Triggers>
+                            <!-- 替换面板时折叠原列表，避免列头和行内容透过透明背景叠加。 -->
+                            <DataTrigger Binding="{Binding IsEditing}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsBrowsingFolder}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ListView.Style>
+                <ListView.InputBindings>
+                    <!-- 回车启动（决策 11） -->
+                    <KeyBinding Key="Enter" Command="{Binding LaunchCommand}" CommandParameter="{Binding SelectedResource}"/>
+                </ListView.InputBindings>
+                <ListView.View>
+                    <GridView AllowsColumnReorder="False">
+                        <GridViewColumn Width="190">
+                            <GridViewColumnHeader Tag="Name" Click="ColumnHeader_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="名称"/>
+                                    <TextBlock Text="{Binding ViewModel.NameSortGlyph, RelativeSource={RelativeSource AncestorType=Window}}" Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </GridViewColumnHeader>
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <!-- 决策 11：双击名称启动；统一由 ListView.MouseDoubleClick 处理（见 code-behind） -->
+                                    <StackPanel Orientation="Horizontal" Background="Transparent">
+                                        <Grid Width="16" Height="16" VerticalAlignment="Center">
+                                            <Image Source="{Binding Icon}" Stretch="Uniform"/>
+                                            <TextBlock Text="{Binding TypeGlyph}" FontFamily="{StaticResource AppIconFont}" FontSize="12"
+                                                       Foreground="{DynamicResource Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       Visibility="{Binding Icon, Converter={StaticResource NullToVis}}"/>
+                                        </Grid>
+                                        <TextBlock Text="&#xE718;" FontFamily="{StaticResource AppIconFont}" FontSize="10"
+                                                   Foreground="{DynamicResource PinStar}" VerticalAlignment="Center"
+                                                   Margin="4,0,0,0" Visibility="{Binding IsPinned, Converter={StaticResource BoolToVis}}"/>
+                                        <TextBlock Text="{Binding DisplayName}" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Width="62">
+                            <GridViewColumnHeader Tag="Type" Click="ColumnHeader_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="类型"/>
+                                    <TextBlock Text="{Binding ViewModel.TypeSortGlyph, RelativeSource={RelativeSource AncestorType=Window}}" Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </GridViewColumnHeader>
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding TypeName}" VerticalAlignment="Center"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Width="180">
+                            <GridViewColumnHeader Tag="Target" Click="ColumnHeader_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="路径"/>
+                                    <TextBlock Text="{Binding ViewModel.TargetSortGlyph, RelativeSource={RelativeSource AncestorType=Window}}" Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </GridViewColumnHeader>
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <!-- 省略显示 + 悬停完整路径（决策 110）；双击打开所在位置（决策 52）。
+                                         Tag 标记供 MouseDoubleClick 识别，避免与行双击启动重复触发 -->
+                                    <TextBlock Tag="OpenLocationCell" Text="{Binding Target}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Target}"
+                                               Foreground="{DynamicResource FgSecondary}" VerticalAlignment="Center">
+                                        <TextBlock.InputBindings>
+                                            <MouseBinding Gesture="LeftDoubleClick"
+                                                          Command="{Binding DataContext.OpenLocationCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                          CommandParameter="{Binding}"/>
+                                        </TextBlock.InputBindings>
+                                    </TextBlock>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                    </GridView>
+                </ListView.View>
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
+                        <!-- Tag 承载主窗口 VM：ContextMenu 运行在 Popup 树，AncestorType=Window 不可达，
+                             菜单项须经 PlacementTarget.Tag 取命令、PlacementTarget.Content 取行数据 -->
+                        <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                        <Setter Property="ContextMenu">
+                            <Setter.Value>
+                                <ContextMenu>
+                                    <ContextMenu.Resources>
+                                        <conv:PinMenuHeaderConverter x:Key="PinMenuHeader"/>
+                                        <BooleanToVisibilityConverter x:Key="MenuBoolToVis"/>
+                                    </ContextMenu.Resources>
+                                    <!-- F19 全项；不适用动作按类型禁用。PlacementTarget=ListViewItem：Tag=窗口VM、Content=行资源 -->
+                                    <MenuItem Header="打开"
+                                              Command="{Binding PlacementTarget.Tag.LaunchCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.Content, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <MenuItem Header="打开所在位置"
+                                              Command="{Binding PlacementTarget.Tag.OpenLocationCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.Content, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <MenuItem Header="编辑"
+                                              Command="{Binding PlacementTarget.Tag.EditCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.Content, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <MenuItem Header="{Binding PlacementTarget.Content.IsPinned, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource PinMenuHeader}}"
+                                              Command="{Binding PlacementTarget.Tag.TogglePinCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.Content, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <MenuItem Header="上移"
+                                              Command="{Binding PlacementTarget.Tag.MovePinnedUpCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.Content, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              Visibility="{Binding PlacementTarget.Content.IsPinned, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource MenuBoolToVis}}"/>
+                                    <MenuItem Header="下移"
+                                              Command="{Binding PlacementTarget.Tag.MovePinnedDownCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.Content, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              Visibility="{Binding PlacementTarget.Content.IsPinned, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource MenuBoolToVis}}"/>
+                                    <Separator/>
+                                    <MenuItem Header="复制路径"
+                                              Command="{Binding PlacementTarget.Tag.CopyPathCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.Content, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <MenuItem Header="移出当前工作区"
+                                              Command="{Binding PlacementTarget.Tag.RemoveFromWorkspaceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                              CommandParameter="{Binding PlacementTarget.Content, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                </ContextMenu>
+                            </Setter.Value>
+                        </Setter>
+                        <Style.Triggers>
+                            <!-- 失效资源整行变灰（决策 73/F08） -->
+                            <DataTrigger Binding="{Binding IsInvalid}" Value="True">
+                                <Setter Property="TextElement.Foreground" Value="{DynamicResource InvalidFg}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ListView.ItemContainerStyle>
+            </ListView>
+
+            <!-- 编辑面板（决策 62/71/115） -->
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Visibility="{Binding IsEditing, Converter={StaticResource BoolToVis}}">
+                <Grid Margin="12,10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="64"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.ColumnSpan="2" Text="{Binding EditPanel.PanelTitle}"
+                               FontSize="14" FontWeight="Bold" Margin="0,0,0,10"/>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="名称" VerticalAlignment="Center" Margin="0,0,8,8"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding EditPanel.Name, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8"/>
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="类型" VerticalAlignment="Center" Margin="0,0,8,8"/>
+                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding EditPanel.TypeDisplay}" VerticalAlignment="Center" Margin="0,0,0,8"
+                               Foreground="{DynamicResource FgSecondary}"/>
+
+                    <TextBlock Grid.Row="3" Grid.Column="0" Text="目标" VerticalAlignment="Top" Margin="0,4,8,8"/>
+                    <DockPanel Grid.Row="3" Grid.Column="1" Margin="0,0,0,8">
+                        <Button DockPanel.Dock="Right" Content="浏览…" Width="56" Margin="6,0,0,0"
+                                Click="BrowseTarget_Click"
+                                Visibility="{Binding EditPanel.ShowBrowse, Converter={StaticResource BoolToVis}}"/>
+                        <TextBox Text="{Binding EditPanel.Target, UpdateSourceTrigger=PropertyChanged}"/>
+                    </DockPanel>
+
+                    <!-- 仅程序显示启动参数（4.2） -->
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="启动参数" VerticalAlignment="Center" Margin="0,0,8,8"
+                               Visibility="{Binding EditPanel.IsProgram, Converter={StaticResource BoolToVis}}"/>
+                    <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding EditPanel.Arguments, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8"
+                             Visibility="{Binding EditPanel.IsProgram, Converter={StaticResource BoolToVis}}"/>
+
+                    <!-- 仅程序显示工作目录（4.2） -->
+                    <TextBlock Grid.Row="5" Grid.Column="0" Text="工作目录" VerticalAlignment="Center" Margin="0,0,8,8"
+                               Visibility="{Binding EditPanel.IsProgram, Converter={StaticResource BoolToVis}}"/>
+                    <DockPanel Grid.Row="5" Grid.Column="1" Margin="0,0,0,8"
+                               Visibility="{Binding EditPanel.IsProgram, Converter={StaticResource BoolToVis}}">
+                        <Button DockPanel.Dock="Right" Content="浏览…" Width="56" Margin="6,0,0,0"
+                                Click="BrowseWorkingDir_Click"/>
+                        <TextBox Text="{Binding EditPanel.WorkingDirectory, UpdateSourceTrigger=PropertyChanged}"/>
+                    </DockPanel>
+
+                    <TextBlock Grid.Row="6" Grid.Column="0" Text="标签" VerticalAlignment="Top" Margin="0,4,8,2"/>
+                    <StackPanel Grid.Row="6" Grid.Column="1">
+                        <TextBox Text="{Binding EditPanel.TagsText, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock Text="多个标签用逗号分隔" Foreground="{DynamicResource FgSecondary}" FontSize="11" Margin="1,2,0,0"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="7" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                        <Button Content="保存" Width="72" Style="{StaticResource AccentButtonStyle}" Command="{Binding SaveEditCommand}"/>
+                        <Button Content="取消" Width="72" Margin="8,0,0,0" Command="{Binding CancelEditCommand}"/>
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+
+            <!-- 文件夹应用内浏览面板（设置开关开启时双击目录资源进入；与列表/编辑面板同区域替换） -->
+            <Grid Visibility="{Binding IsBrowsingFolder, Converter={StaticResource BoolToVis}}"
+                  Background="Transparent"
+                  MouseDown="FolderBrowserPanel_MouseDown">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 工具行：返回列表 / 上级 / 后退 / 前进 / 刷新 / 面包屑 / 资源管理器 -->
+                <DockPanel Grid.Row="0" Margin="10,8,10,6"
+                           IsEnabled="{Binding FolderBrowser.IsBusy, Converter={StaticResource InverseBool}}">
+                    <Button DockPanel.Dock="Left" Content="返回列表" Width="72" Margin="0,0,10,0"
+                            Command="{Binding CloseFolderBrowserCommand}" ToolTip="回到工作区资源列表"/>
+                    <Button DockPanel.Dock="Left" Content="上一级" Width="56" Margin="0,0,4,0"
+                            Command="{Binding FolderBrowser.GoUpCommand}" ToolTip="返回上一级目录"/>
+                    <Button DockPanel.Dock="Left" Content="&#xE72B;" Width="30" Margin="0,0,4,0"
+                            FontFamily="{StaticResource AppIconFont}" Command="{Binding FolderBrowser.GoBackCommand}"
+                            ToolTip="后退（鼠标后退键同效）"/>
+                    <Button DockPanel.Dock="Left" Content="&#xE72A;" Width="30" Margin="0,0,8,0"
+                            FontFamily="{StaticResource AppIconFont}" Command="{Binding FolderBrowser.GoForwardCommand}"
+                            ToolTip="前进（鼠标前进键同效）"/>
+                    <Button DockPanel.Dock="Left" Content="刷新" Width="56" Margin="0,0,10,0"
+                            Command="{Binding FolderBrowser.RefreshCommand}"/>
+                    <Button DockPanel.Dock="Right" Content="在资源管理器中打开"
+                            Command="{Binding FolderBrowser.OpenInExplorerCommand}"
+                            ToolTip="用系统资源管理器打开当前目录"/>
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding FolderBrowser.Breadcrumbs}" VerticalAlignment="Center">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="{Binding Name}" Margin="0,0,2,0"
+                                                Command="{Binding DataContext.FolderBrowser.OpenBreadcrumbCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"/>
+                                        <TextBlock Text="&#x203A;" Margin="2,0,6,0" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource FgSecondary}"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+
+                <!-- 子项列表：目录在前名称升序（服务端契约），双击子目录深入 / 子文件系统打开 -->
+                <ListView x:Name="FolderEntryList"
+                          Grid.Row="1"
+                          ItemsSource="{Binding FolderBrowser.Entries}"
+                          MouseDoubleClick="FolderEntryList_MouseDoubleClick"
+                          PreviewMouseRightButtonUp="FolderEntryList_MouseRightButtonUp"
+                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                          VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ListView.View>
+                        <GridView AllowsColumnReorder="False">
+                            <GridViewColumn Header="名称" Width="240">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                                            <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource AppIconFont}" FontSize="12"
+                                                       Foreground="{DynamicResource Accent}" VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding Name}" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding FullPath}"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="类型" Width="70" DisplayMemberBinding="{Binding TypeName}"/>
+                            <GridViewColumn Header="大小" Width="80" DisplayMemberBinding="{Binding SizeDisplay}"/>
+                            <GridViewColumn Header="修改时间" Width="130" DisplayMemberBinding="{Binding ModifiedDisplay}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+
+                <Border Grid.Row="2" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="10,3">
+                    <TextBlock Text="{Binding FolderBrowser.StatusText}" Foreground="{DynamicResource FgSecondary}"/>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- ===== 底部状态栏（决策 57/118） ===== -->
+        <Border Grid.Row="4" Background="{DynamicResource Bg}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="10,4">
+            <DockPanel LastChildFill="False">
+                <TextBlock DockPanel.Dock="Left" Text="{Binding StatusTotalText}"/>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding StatusSelectedText}"/>
+                <TextBlock HorizontalAlignment="Center" Text="{Binding StatusScopeText}"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>
