@@ -53,3 +53,6 @@ src/
 tests/                        单元、应用层与集成测试
 ```
 
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。
