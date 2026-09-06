@@ -166,15 +166,15 @@ public partial class FolderBrowserViewModel : ObservableObject
     [RelayCommand]
     private Task RefreshAsync() => IsBusy ? Task.CompletedTask : NavigateCoreAsync(CurrentPath, commitHistory: false);
 
-    // 系统菜单命令的刷新调度：删除/重命名由 Shell 异步完成（确认框、内联编辑），
-    // 立即刷新会打断操作或枚举到旧状态；重命名内联编辑等待更久。重复触发重置计时。
+    // 文件系统操作的刷新调度：删除/重命名由 Shell 或文件 API 完成，
+    // 立即刷新可能枚举到旧状态；重命名内联编辑等待更久。重复触发时重置计时。
     private const int DefaultRefreshDelayMs = 600;
 
     private const int RenameRefreshDelayMs = 2500;
 
     private System.Windows.Threading.DispatcherTimer? _shellCommandRefreshTimer;
 
-    /// <summary>用户经系统上下文菜单执行命令（删除/重命名等）后调用，延迟刷新当前目录。</summary>
+    /// <summary>删除/重命名等文件系统操作完成后调用，延迟刷新当前目录。</summary>
     public void ScheduleRefreshAfterShellCommand(bool isRename)
     {
         if (_shellCommandRefreshTimer is null)

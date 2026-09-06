@@ -232,7 +232,7 @@ public partial class MainWindow : Window
     /// <summary>
     /// 右键子项弹出操作菜单：右键未选中项时改选为该项（多选集保留）。
     /// 刻意不用进程内 IContextMenu 系统菜单——实测本机该链路会被第三方 Shell 扩展
-    /// 弄崩宿主进程，改用等价的稳定 API 子集（打开/定位/复制/重命名/回收站删除/属性）。
+    /// 弄崩宿主进程，改用等价的稳定 API 子集（打开/定位/复制/重命名/回收站删除/属性/Git Extensions 入口）。
     /// </summary>
     private void FolderEntryList_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
     {
@@ -350,7 +350,82 @@ public partial class MainWindow : Window
             menu.Items.Add(properties);
         }
 
+        AddGitMenu(menu, selected);
+
         return menu;
+    }
+
+    /// <summary>在内置菜单中提供 Git Extensions 的常用入口，不加载资源管理器 Shell 扩展。</summary>
+    private void AddGitMenu(ContextMenu menu, List<FolderEntryViewModel> selected)
+    {
+        if (selected.Count == 0)
+        {
+            return;
+        }
+
+        var repositoryRoot = GitIntegration.FindRepositoryRoot(selected[0].FullPath);
+        if (repositoryRoot is null || !GitIntegration.TryFindGitExtensions(out _))
+        {
+            return;
+        }
+
+        menu.Items.Add(new Separator());
+
+        var openRepository = new MenuItem { Header = "GitExt 打开仓库" };
+        openRepository.Click += (_, _) => RunGitAction(
+            () => GitIntegration.OpenRepository(repositoryRoot));
+        menu.Items.Add(openRepository);
+
+        var gitExtensions = new MenuItem { Header = "Git Extensions" };
+        var singleFile = selected.Count == 1 && !selected[0].IsDirectory;
+        var singleSelection = selected.Count == 1;
+
+        var difftool = new MenuItem { Header = "Open with difftool", IsEnabled = singleFile };
+        difftool.Click += (_, _) => RunGitAction(
+            () => GitIntegration.OpenDifftool(repositoryRoot, selected[0].FullPath));
+        gitExtensions.Items.Add(difftool);
+
+        var fileHistory = new MenuItem { Header = "File history", IsEnabled = singleFile };
+        fileHistory.Click += (_, _) => RunGitAction(
+            () => GitIntegration.OpenFileHistory(repositoryRoot, selected[0].FullPath));
+        gitExtensions.Items.Add(fileHistory);
+
+        gitExtensions.Items.Add(new Separator());
+
+        var reset = new MenuItem { Header = "Reset file changes..." };
+        reset.Click += (_, _) => RunGitAction(
+            () => GitIntegration.OpenReset(repositoryRoot));
+        gitExtensions.Items.Add(reset);
+
+        var addFiles = new MenuItem { Header = "Add files...", IsEnabled = singleSelection };
+        addFiles.Click += (_, _) => RunGitAction(
+            () => GitIntegration.OpenAddFiles(repositoryRoot, selected[0].FullPath));
+        gitExtensions.Items.Add(addFiles);
+
+        var applyPatch = new MenuItem { Header = "Apply patch...", IsEnabled = singleFile };
+        applyPatch.Click += (_, _) => RunGitAction(
+            () => GitIntegration.OpenApplyPatch(repositoryRoot, selected[0].FullPath));
+        gitExtensions.Items.Add(applyPatch);
+
+        gitExtensions.Items.Add(new Separator());
+
+        var settings = new MenuItem { Header = "Settings" };
+        settings.Click += (_, _) => RunGitAction(
+            () => GitIntegration.OpenSettings(repositoryRoot));
+        gitExtensions.Items.Add(settings);
+        menu.Items.Add(gitExtensions);
+    }
+
+    private void RunGitAction(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            ViewModel.ShowError($"Git 操作失败：{ex.Message}");
+        }
     }
 
     // ===== 编辑面板浏览（决策 115） =====
