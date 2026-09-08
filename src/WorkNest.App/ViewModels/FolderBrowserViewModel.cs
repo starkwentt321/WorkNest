@@ -82,7 +82,27 @@ public partial class FolderBrowserViewModel : ObservableObject
         ResourceId = resourceId;
     }
 
-    public ObservableCollection<FolderEntryViewModel> Entries { get; } = [];
+    /// <summary>当前目录子项；导航时整体替换实例并单次通知，避免大目录（上限 5000）逐条 Add 的逐项 CollectionChanged。</summary>
+    public ObservableCollection<FolderEntryViewModel> Entries { get; private set; } = [];
+
+    private IReadOnlyList<FolderEntryViewModel> _allEntries = [];
+    private bool _listingTruncated;
+
+    [ObservableProperty]
+    private string _searchText = string.Empty;
+
+    partial void OnSearchTextChanged(string value) => FilterEntries();
+
+    private void FilterEntries()
+    {
+        // 只筛选当前目录的已加载子项，保留原顺序；清空时无需再次访问磁盘。
+        var tokens = SearchText.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Entries = new ObservableCollection<FolderEntryViewModel>(_allEntries.Where(entry =>
+            tokens.All(token => entry.Name.Contains(token, StringComparison.OrdinalIgnoreCase))));
+        OnPropertyChanged(nameof(Entries));
+        StatusText = tokens.Length == 0 ? $"{Entries.Count} 项" : $"找到 {Entries.Count} 项 / 共 {_allEntries.Count} 项";
+        if (_listingTruncated) StatusText += $"（目录过大，仅搜索前 {_allEntries.Count} 项）";
+    }
 
     public ObservableCollection<BreadcrumbSegment> Breadcrumbs { get; } = [];
 
@@ -235,15 +255,11 @@ public partial class FolderBrowserViewModel : ObservableObject
     private void ApplyListing(FolderListingDto listing)
     {
         CurrentPath = listing.Path;
-        Entries.Clear();
-        foreach (var dto in listing.Entries)
-        {
-            Entries.Add(new FolderEntryViewModel(dto));
-        }
+        // 整体替换集合实例 + 单次 OnPropertyChanged：一次 Reset 通知替代逐条 Add（大目录可达 5000 项）
+        _allEntries = listing.Entries.Select(e => new FolderEntryViewModel(e)).ToList();
+        _listingTruncated = listing.Truncated;
+        FilterEntries();
         RebuildBreadcrumbs();
-        StatusText = listing.Truncated
-            ? $"{Entries.Count} 项（目录过大，仅显示前 {Entries.Count} 项）"
-            : $"{Entries.Count} 项";
         OnPropertyChanged(nameof(CanGoUp));
         OnPropertyChanged(nameof(CanGoBack));
         OnPropertyChanged(nameof(CanGoForward));

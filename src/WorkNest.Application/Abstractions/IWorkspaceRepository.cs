@@ -17,8 +17,5 @@ public interface IWorkspaceRepository
     /// <summary>级联删除关联（WorkspaceResource）；不触碰真实文件。</summary>
     Task DeleteAsync(int id);
 
-    /// <summary>最近使用模式下使用；仅在成功启动资源后调用。</summary>
-    Task TouchLastUsedAsync(int id, DateTime utc);
-
     Task<int> GetResourceCountAsync(int workspaceId);
 }

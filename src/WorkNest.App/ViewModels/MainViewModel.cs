@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using WorkNest.Application.Abstractions;
 using WorkNest.Application.Dtos;
+using WorkNest.Application.Services;
 using WorkNest.Application.Validation;
 using WorkNest.App.Services;
 using WorkNest.App.Themes;
@@ -30,11 +31,6 @@ public partial class MainViewModel : ObservableObject
     private readonly IAutostartService _autostartService;
     private readonly IBackupService _backupService;
     private readonly IResourceIconProvider _iconProvider;
-    // 以下四项仅供设置窗口 VM 工厂透传；主窗口自身不直接使用
-    private readonly IGlobalHotkeyService _hotkeyService;
-    private readonly IExportService _exportService;
-    private readonly IImportService _importService;
-    private readonly IAppRestart _appRestart;
     private readonly IAppDialogs _dialogs;
     private readonly IFilePicker _filePicker;
     private readonly IFolderBrowserService _folderBrowserService;
@@ -50,6 +46,21 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>切换工作区时抑制 SearchAll 触发的双重加载。</summary>
     private bool _suppressRangeReload;
+
+    /// <summary>
+    /// 资源加载版本号：每次触发加载递增并捕获快照，后台任务返回时比对；
+    /// 不一致说明期间已有更新的加载被触发，旧任务的结果整体丢弃，防止晚归覆盖新数据。
+    /// </summary>
+    private int _loadGeneration;
+
+    /// <summary>批量清空搜索时（切工作区/进最近视图/回退选择）抑制即时重建，由随后的资源加载统一重建一次。</summary>
+    private bool _suppressSearchRebuild;
+
+    /// <summary>搜索输入防抖计时器（DispatcherTimer 仅 UI 线程有效）；延迟为 0 时不创建，直接同步重建。</summary>
+    private System.Windows.Threading.DispatcherTimer? _searchDebounceTimer;
+
+    /// <summary>搜索防抖延迟（毫秒）；测试环境传 0 走同步直调路径。</summary>
+    private readonly int _searchDebounceMilliseconds;
 
     /// <summary>最近使用视图状态（F09/决策 34）：保留当前工作区上下文的独立视图。</summary>
     private bool _isRecentView;
@@ -69,13 +80,10 @@ public partial class MainViewModel : ObservableObject
         IAutostartService autostartService,
         IBackupService backupService,
         IResourceIconProvider iconProvider,
-        IGlobalHotkeyService hotkeyService,
-        IExportService exportService,
-        IImportService importService,
-        IAppRestart appRestart,
         IAppDialogs dialogs,
         IFilePicker filePicker,
-        IFolderBrowserService folderBrowserService)
+        IFolderBrowserService folderBrowserService,
+        int searchDebounceMilliseconds = 250)
     {
         _workspaceService = workspaceService;
         _resourceService = resourceService;
@@ -84,14 +92,10 @@ public partial class MainViewModel : ObservableObject
         _autostartService = autostartService;
         _backupService = backupService;
         _iconProvider = iconProvider;
-        _hotkeyService = hotkeyService;
-        _exportService = exportService;
-        _importService = importService;
-        _appRestart = appRestart;
         _dialogs = dialogs;
         _filePicker = filePicker;
         _folderBrowserService = folderBrowserService;
-        Resources.CollectionChanged += (_, _) => OnPropertyChanged(nameof(StatusTotalText));
+        _searchDebounceMilliseconds = searchDebounceMilliseconds;
     }
 
     /// <summary>组合根在启动时赋值：上次选择的工作区 Id（决策 93）。</summary>
@@ -132,8 +136,10 @@ public partial class MainViewModel : ObservableObject
                 _isRecentView = true;
                 OnPropertyChanged(nameof(IsRecentView));
                 _suppressRangeReload = true;
+                _suppressSearchRebuild = true; // 批量清空搜索不单独重建视图，切换后由资源加载统一重建一次
                 SearchAll = false; // 决策 27：最近使用固定当前工作区范围
                 SearchText = string.Empty;
+                _suppressSearchRebuild = false;
                 _suppressRangeReload = false;
                 OnPropertyChanged(nameof(StatusScopeText));
                 _ = LoadResourcesAsync();
@@ -176,8 +182,10 @@ public partial class MainViewModel : ObservableObject
     private async Task OnCurrentWorkspaceChangedAsync(WorkspaceDto workspace)
     {
         _suppressRangeReload = true;
+        _suppressSearchRebuild = true; // 批量清空搜索不单独重建视图，切换后由资源加载统一重建一次
         SearchAll = false; // 决策 27：切回当前工作区范围
         SearchText = string.Empty; // 决策 56：自动清空搜索
+        _suppressSearchRebuild = false;
         _suppressRangeReload = false;
 
         try
@@ -194,8 +202,11 @@ public partial class MainViewModel : ObservableObject
 
     // ============ 资源列表与搜索 ============
 
-    /// <summary>过滤+排序后的视图集合。</summary>
-    public ObservableCollection<ResourceItemViewModel> Resources { get; } = [];
+    /// <summary>
+    /// 过滤+排序后的视图集合。重建时整体替换实例并单次通知，
+    /// 避免逐条 Add 触发 N 次 CollectionChanged（替换由 RebuildView 负责，订阅随实例重建）。
+    /// </summary>
+    public ObservableCollection<ResourceItemViewModel> Resources { get; private set; } = [];
 
     [ObservableProperty]
     private ResourceItemViewModel? _selectedResource;
@@ -210,8 +221,38 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string _searchText = string.Empty;
 
-    /// <summary>输入即过滤（决策 55），不改数据源。</summary>
-    partial void OnSearchTextChanged(string value) => RebuildView();
+    /// <summary>输入即过滤（决策 55），不改数据源；带防抖，连续击键只让最后一次生效，避免每个字符都全量重算。</summary>
+    partial void OnSearchTextChanged(string value)
+    {
+        _searchPending = true;
+        NotifySearchState();
+        // 批量清空搜索（切工作区等）不触发重建，防止与随后的资源加载双重重建；同时停掉残留的待触发计时
+        if (_suppressSearchRebuild)
+        {
+            _searchDebounceTimer?.Stop();
+            return;
+        }
+        if (_searchDebounceMilliseconds <= 0)
+        {
+            // 同步直调路径：测试环境没有 Dispatcher 消息泵，计时器永远不会触发，必须退化为同步保证断言时机确定
+            RebuildView();
+            return;
+        }
+        if (_searchDebounceTimer is null)
+        {
+            _searchDebounceTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(_searchDebounceMilliseconds),
+            };
+            _searchDebounceTimer.Tick += (_, _) =>
+            {
+                _searchDebounceTimer!.Stop();
+                RebuildView(); // 读取当前 SearchText，防抖期间连续输入只应用最后一次
+            };
+        }
+        _searchDebounceTimer.Stop();
+        _searchDebounceTimer.Start();
+    }
 
     [ObservableProperty]
     private bool _searchAll;
@@ -275,18 +316,8 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void OpenAbnormalLogFolder()
     {
-        try
-        {
-            var logsDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WorkNest", "Logs");
-            Directory.CreateDirectory(logsDir);
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{logsDir}\"") { UseShellExecute = true });
-        }
-        catch
-        {
-            // 打开日志目录失败不打断正常使用
-        }
+        // 目录不存在时补建再打开；失败静默，不打断正常使用
+        _ = AppPaths.OpenOrCreateInExplorer(AppPaths.LogsDir);
     }
 
     // ============ 编辑面板（决策 62/71/72） ============
@@ -300,6 +331,7 @@ public partial class MainViewModel : ObservableObject
     partial void OnEditPanelChanged(ResourceEditViewModel? value)
     {
         OnPropertyChanged(nameof(IsEditing));
+        NotifySearchState();
         // 浏览面板与编辑面板同区域互斥；编辑入口虽在列表上，仍防御性关闭避免两面板叠加
         if (value is not null)
         {
@@ -322,6 +354,7 @@ public partial class MainViewModel : ObservableObject
     partial void OnFolderBrowserChanged(FolderBrowserViewModel? value)
     {
         OnPropertyChanged(nameof(IsBrowsingFolder));
+        NotifySearchState();
         InvalidateCommands();
     }
 
@@ -387,9 +420,27 @@ public partial class MainViewModel : ObservableObject
             return true;
         }
 
-        await LoadResourcesAsync(); // 记账后默认排序重排（与启动成功路径一致，决策 47）
+        // 记账后默认排序重排（与启动成功路径一致，决策 47）；普通视图局部更新即可保持排序语义
+        RefreshAfterSuccessfulLaunch(item);
         EnterFolderBrowser(item.Id, item.Dto.Target, item.Name);
         return true;
+    }
+
+    /// <summary>
+    /// 启动/内联打开成功后的局部更新：更新该项统计并按当前排序重排，替代全量重载。
+    /// 语义与全量重载一致：列头排序只用名称/类型/目标，不随统计变化；
+    /// 默认排序的排序键（RunCount/LastUsedAt）已同步更新，重算结果与重载一致；
+    /// 最近使用视图的服务端顺序是最近时间倒序，刚使用的项必然最新，移到首位即可。
+    /// </summary>
+    private void RefreshAfterSuccessfulLaunch(ResourceItemViewModel item)
+    {
+        item.ApplySuccessfulLaunch(DateTime.UtcNow); // 与 LauncherService 记账同用 UtcNow 口径
+        if (_isRecentView)
+        {
+            _master.Remove(item);
+            _master.Insert(0, item);
+        }
+        RebuildView();
     }
 
     private void EnterFolderBrowser(int resourceId, string target, string rootName)
@@ -412,7 +463,7 @@ public partial class MainViewModel : ObservableObject
         {
             try
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+                FolderItemOps.OpenInExplorer(path); // 浏览面板根目录直接打开
             }
             catch (Exception ex)
             {
@@ -462,6 +513,8 @@ public partial class MainViewModel : ObservableObject
         }
         NotifySortGlyphs();
         RebuildView();
+        ListPreferences = ListPreferences with { SortKey = SortKey, SortDescending = SortKey is not null && SortDescending };
+        _ = SaveListPreferencesAsync();
     }
 
     private void NotifySortGlyphs()
@@ -503,6 +556,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         await RefreshInlineBrowseSettingAsync(); // 内嵌浏览开关随会话恢复
+        await LoadListPreferencesAsync();
 
         await ReloadWorkspacesAsync();
 
@@ -575,8 +629,10 @@ public partial class MainViewModel : ObservableObject
             _currentOption = WorkspaceOptions.FirstOrDefault(o => !o.IsManageItem && !o.IsRecentItem);
             _recentContextWorkspace = _currentOption?.Workspace;
             _suppressRangeReload = true;
+            _suppressSearchRebuild = true; // 批量清空搜索不单独重建视图，回退后由资源加载统一重建一次
             SearchAll = false; // 决策 27：回退后回到当前工作区范围
             SearchText = string.Empty; // 决策 56：工作区已变化，清空搜索
+            _suppressSearchRebuild = false;
             _suppressRangeReload = false;
             ExitRecentView();
             InvalidateCommands(); // 当前工作区变化影响新增三入口与启动类命令的可用性
@@ -588,35 +644,62 @@ public partial class MainViewModel : ObservableObject
     /// <summary>重载当前范围的资源并重建视图（启动成功后的静默刷新也走这里）。</summary>
     public async Task LoadResourcesAsync()
     {
-        IReadOnlyList<ResourceDto> dtos = [];
+        // 重入保护：触发时递增版本号并快照当前范围；快速切换工作区/连续触发时，
+        // 晚归的旧任务返回后比对版本不一致即整体丢弃，绝不用过期数据覆盖最新请求
+        var generation = ++_loadGeneration;
+        IsResourceLoading = true;
+        _resourceLoadFailed = false;
+        NotifySearchState();
+        var isRecentView = _isRecentView;
+        var searchAll = SearchAll;
+        var workspace = CurrentWorkspace;
+        List<ResourceItemViewModel> master;
         try
         {
-            if (_isRecentView && CurrentWorkspace is { } recentWorkspace)
+            // Microsoft.Data.Sqlite 的异步 API 实为同步执行，再叠加 DTO 映射（逐项 PathExists 磁盘 IO）
+            // 与图标提取（GDI+ 磁盘 IO），整段放后台线程执行；图标位图已 Freeze，允许跨线程访问
+            master = await Task.Run(async () =>
             {
-                // F09/决策 59/70：当前工作区最近成功启动过的不同资源，最多 20 条
-                dtos = await _resourceService.GetRecentlyUsedAsync(recentWorkspace.Id, 20);
-            }
-            else if (SearchAll)
-            {
-                dtos = await _resourceService.GetAllWorkspacesAsync();
-            }
-            else if (CurrentWorkspace is { } ws)
-            {
-                dtos = await _resourceService.GetForWorkspaceAsync(ws.Id);
-            }
+                IReadOnlyList<ResourceDto> dtos = [];
+                if (isRecentView && workspace is not null)
+                {
+                    // F09/决策 59/70：当前工作区最近成功启动过的不同资源，最多 20 条
+                    dtos = await _resourceService.GetRecentlyUsedAsync(workspace.Id, 20);
+                }
+                else if (searchAll)
+                {
+                    dtos = await _resourceService.GetAllWorkspacesAsync();
+                }
+                else if (workspace is not null)
+                {
+                    dtos = await _resourceService.GetForWorkspaceAsync(workspace.Id);
+                }
+                return dtos.Select(d => new ResourceItemViewModel(d, _iconProvider)).ToList();
+            });
         }
         catch (Exception ex)
         {
-            ShowError($"加载资源失败：{ex.Message}");
+            if (generation == _loadGeneration)
+            {
+                ShowError($"加载资源失败：{ex.Message}");
+                _resourceLoadFailed = true;
+            }
+            master = [];
         }
-        _master = dtos.Select(d => ResourceItemViewModel.Create(d, _iconProvider)).ToList();
-        _masterById = _master.ToDictionary(m => m.Id);
+        if (generation != _loadGeneration)
+        {
+            return; // 过期任务：期间已触发更新的加载，丢弃本次结果
+        }
+        _master = master;
+        _masterById = master.ToDictionary(m => m.Id);
+        IsResourceLoading = false;
         RebuildView();
     }
 
     /// <summary>重建视图集合：搜索过滤（SearchFilter）→ 默认排序或列头排序（决策 48/51）。</summary>
     private void RebuildView()
     {
+        _searchPending = false;
         var keepId = SelectedResource?.Id;
         IEnumerable<ResourceDto> seq = _master.Select(m => m.Dto).Where(d => SearchFilter.Matches(d, SearchText));
 
@@ -632,13 +715,15 @@ public partial class MainViewModel : ObservableObject
                 _ => ResourceOrdering.ApplyDefault(seq).ToList(),
             };
 
-        Resources.Clear();
-        foreach (var dto in list)
-        {
-            Resources.Add(_masterById[dto.Id]);
-        }
+        // 整体替换集合实例并单次通知：避免 Clear + 逐条 Add 触发 N 次 CollectionChanged，
+        // 以及状态文本随每次 Add 重复通知；状态文本统计只随最终结果刷新一次
+        var next = new ObservableCollection<ResourceItemViewModel>(list.Select(d => _masterById[d.Id]));
+        next.CollectionChanged += (_, _) => OnPropertyChanged(nameof(StatusTotalText));
+        Resources = next;
+        OnPropertyChanged(nameof(Resources));
         SelectedResource = keepId is { } id ? Resources.FirstOrDefault(r => r.Id == id) : null;
         OnPropertyChanged(nameof(StatusTotalText));
+        NotifySearchState();
     }
 
     private static ResourceItemViewModel? ResolveItem(object? parameter) =>
@@ -688,8 +773,17 @@ public partial class MainViewModel : ObservableObject
             var result = await _launcherService.LaunchAsync(workspaceId, item.Id);
             if (result.Success)
             {
-                // 成功后静默重载：默认排序按最新使用情况重排（决策 47）
-                await LoadResourcesAsync();
+                if (SearchAll)
+                {
+                    // “全部工作区”视图的统计取首个关联行，与本次记账工作区不一定是同一行，
+                    // 局部 +1 无法保证与全量重载口径一致，保留全量刷新（决策 47）
+                    await LoadResourcesAsync();
+                }
+                else
+                {
+                    // 成功后静默局部更新：按最新使用情况重排（决策 47），避免整表重载
+                    RefreshAfterSuccessfulLaunch(item);
+                }
             }
             else
             {
@@ -750,15 +844,7 @@ public partial class MainViewModel : ObservableObject
         pinnedIds.Remove(sourceId);
         var index = Math.Min(pinnedIds.IndexOf(targetId) + (insertAfter ? 1 : 0), pinnedIds.Count);
         pinnedIds.Insert(index, sourceId);
-        try
-        {
-            await _resourceService.SetPinnedOrderAsync(CurrentWorkspace.Id, pinnedIds);
-            await LoadResourcesAsync();
-        }
-        catch (Exception ex)
-        {
-            ShowError($"置顶排序保存失败：{ex.Message}");
-        }
+        await SavePinnedOrderAsync(pinnedIds);
     }
 
     [RelayCommand(CanExecute = nameof(CanReorderPinned))]
@@ -781,9 +867,18 @@ public partial class MainViewModel : ObservableObject
             return;
         }
         (pinnedIds[index], pinnedIds[target]) = (pinnedIds[target], pinnedIds[index]);
+        await SavePinnedOrderAsync(pinnedIds);
+    }
+
+    /// <summary>
+    /// 置顶排序共享骨架（决策 32）：拖动与上移/下移只负责算出新顺序，
+    /// 保存、重载列表与失败横幅文案统一在此收口（两个调用方入口均已确保 CurrentWorkspace 非空）。
+    /// </summary>
+    private async Task SavePinnedOrderAsync(List<int> orderedIds)
+    {
         try
         {
-            await _resourceService.SetPinnedOrderAsync(CurrentWorkspace.Id, pinnedIds);
+            await _resourceService.SetPinnedOrderAsync(CurrentWorkspace!.Id, orderedIds);
             await LoadResourcesAsync();
         }
         catch (Exception ex)
@@ -1126,10 +1221,14 @@ public partial class MainViewModel : ObservableObject
         }
         try
         {
-            ProcessStartInfo psi = item.Type == ResourceType.Directory
-                ? new ProcessStartInfo("explorer.exe", $"\"{item.Target}\"") { UseShellExecute = true } // 目录直接打开自身（决策 60）
-                : new ProcessStartInfo("explorer.exe", $"/select,\"{item.Target}\"") { UseShellExecute = true }; // 文件/程序定位并选中（决策 112）
-            Process.Start(psi);
+            if (item.Type == ResourceType.Directory)
+            {
+                FolderItemOps.OpenInExplorer(item.Target); // 目录直接打开自身（决策 60）
+            }
+            else
+            {
+                FolderItemOps.RevealInExplorer(item.Target); // 文件/程序定位并选中（决策 112）
+            }
         }
         catch (Exception ex)
         {
@@ -1139,10 +1238,5 @@ public partial class MainViewModel : ObservableObject
 
     // ============ 子视图模型工厂（供 View 层打开对话框） ============
 
-    public WorkspaceManagerViewModel CreateWorkspaceManagerViewModel() => new(_workspaceService);
-
-    /// <summary>设置窗口 VM（F22）：热键/导入导出/恢复重启所需服务在此透传。</summary>
-    public SettingsViewModel CreateSettingsViewModel() =>
-        new(_settingsService, _autostartService, _backupService,
-            _hotkeyService, _exportService, _importService, _workspaceService, _appRestart);
+    public WorkspaceManagerViewModel CreateWorkspaceManagerViewModel() => new(_workspaceService, _dialogs);
 }

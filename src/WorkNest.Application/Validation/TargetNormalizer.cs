@@ -61,7 +61,7 @@ public static class TargetNormalizer
         {
             return type switch
             {
-                ResourceType.Directory => Path.TrimEndingDirectorySeparator(normalizedTarget) is var p ? Path.GetFileName(p) : normalizedTarget,
+                ResourceType.Directory => Path.GetFileName(Path.TrimEndingDirectorySeparator(normalizedTarget)),
                 ResourceType.Program => Path.GetFileNameWithoutExtension(normalizedTarget),
                 ResourceType.File => StripShortcutSuffix(Path.GetFileName(normalizedTarget)),
                 ResourceType.Website when Uri.TryCreate(normalizedTarget, UriKind.Absolute, out var uri) => uri.Host,

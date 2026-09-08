@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.IO; // WindowsDesktop 隐式 using 不含 System.IO（被 WinForms/Drawing 顶替）
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
@@ -67,9 +66,7 @@ public partial class App : System.Windows.Application, IAppRestart
     private async Task RunStartupCoreAsync()
     {
         // 1~2. 数据目录 + 日志 + 全部服务注册（目录与日志在注册方法内完成）
-        var dataRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WorkNest");
+        var dataRoot = Services.AppPaths.DataRoot;
         var services = new ServiceCollection();
         services.AddSingleton<IClock, SystemClock>();
         services.AddWorkNestInfrastructure(dataRoot);
@@ -89,6 +86,10 @@ public partial class App : System.Windows.Application, IAppRestart
         // 恢复备份需要整进程重启（释放数据库句柄），实现就挂在本组合根上
         services.AddSingleton<IAppRestart>(_ => (IAppRestart)System.Windows.Application.Current);
         services.AddSingleton<ViewModels.MainViewModel>();
+        // 设置窗口每次打开取新 VM（瞬时），由 MainWindow 注入工厂按需创建；
+        // backupScheduler 为可选参数，容器能解析到单例时自动注入
+        services.AddTransient<ViewModels.SettingsViewModel>();
+        services.AddSingleton(sp => (Func<ViewModels.SettingsViewModel>)sp.GetRequiredService<ViewModels.SettingsViewModel>);
         services.AddSingleton<MainWindow>();
         _host = services.BuildServiceProvider();
 
@@ -128,7 +129,7 @@ public partial class App : System.Windows.Application, IAppRestart
             {
                 try
                 {
-                    System.Diagnostics.Process.Start("explorer.exe", Path.Combine(dataRoot, "Backups"));
+                    WorkNest.App.Services.FolderItemOps.OpenInExplorer(Services.AppPaths.BackupsDir);
                 }
                 catch
                 {
@@ -235,6 +236,7 @@ public partial class App : System.Windows.Application, IAppRestart
         // Activate 可能被前台锁策略挡住，短暂置顶确保可见后立即交还
         _mainWindow.Topmost = true;
         _mainWindow.Topmost = false;
+        _mainWindow.FocusSearchOnRecall();
     }
 
     private void OnMainWindowActivated(object? sender, EventArgs e)
@@ -312,14 +314,22 @@ public partial class App : System.Windows.Application, IAppRestart
 
     protected override void OnExit(ExitEventArgs e)
     {
-        // F24：正常退出路径写收尾标志。阻塞等待确保落库后才退出进程；
-        // 强杀/断电到不了这里，下次启动读到 false 即提示异常退出
+        // 列宽/排序后台写入不依赖 Dispatcher；正常退出前限时收尾，避免最后一次调整丢失。
+        if (_mainWindow is not null)
+        {
+            var pendingPreferences = _mainWindow.ViewModel.FlushListPreferencesAsync();
+            if (!pendingPreferences.Wait(4000) || !pendingPreferences.Result)
+                WorkNestLog.Warning("App", "退出时列表偏好未能保存，重启后可能恢复旧布局");
+        }
+        // F24：正常退出路径写收尾标志。退出路径不能无限阻塞：设置服务内部走异步 SQLite，
+        // 放线程池执行并限时等待，通常情况落库后才退出进程；超时/失败按异常退出处理
+        // （下次启动读到 false 提示异常退出）。强杀/断电到不了这里。与 WindowController.SaveAndWait 同模式。
         if (_sessionArmed && _host is not null)
         {
             try
             {
                 var settings = _host.GetRequiredService<ISettingsService>();
-                settings.SetAsync(SettingKeys.SessionCleanExit, true).GetAwaiter().GetResult();
+                Task.Run(() => settings.SetAsync(SettingKeys.SessionCleanExit, true)).Wait(1500);
             }
             catch (Exception ex)
             {
@@ -330,9 +340,10 @@ public partial class App : System.Windows.Application, IAppRestart
         _hotkey?.Unregister();
         _tray?.Dispose();
         _tray = null;
+        // 单实例锁以单例注册且实现 IDisposable，这里随容器释放（让出互斥体所有权并关闭句柄）；
+        // 重启必须在锁释放之后执行，否则新进程会被当作二次启动而退出
         _host?.Dispose();
 
-        // 重启必须在单实例锁释放之后执行，否则新进程会被当作二次启动而退出
         if (_restartOnExit)
         {
             _restartOnExit = false;

@@ -108,11 +108,29 @@ public static class FolderItemOps
         ShellExecuteExW(ref info);
     }
 
-    /// <summary>在资源管理器中打开所在文件夹并选中该条目。</summary>
-    public static void ShowInExplorer(string path)
+    /// <summary>在资源管理器中直接打开目录。</summary>
+    public static void OpenInExplorer(string path)
     {
-        System.Diagnostics.Process.Start(
-            new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+        // ArgumentList 逐个传参：路径含空格/特殊字符时不再依赖字符串拼接与手工引号，消除参数注入面
+        var psi = new System.Diagnostics.ProcessStartInfo("explorer.exe") { UseShellExecute = true };
+        psi.ArgumentList.Add(path); // explorer 直接以路径参数打开该目录
+        System.Diagnostics.Process.Start(psi);
+    }
+
+    /// <summary>在资源管理器中打开所在文件夹并选中该条目。</summary>
+    public static void RevealInExplorer(string path)
+    {
+        // explorer 的 /select 开关必须与路径以逗号合并为同一参数（/select,"path"）；
+        // 拆成两个参数时 explorer 解析失败，实测会退回打开“文档”目录
+        if (path.Contains('"'))
+        {
+            throw new ArgumentException("路径包含非法字符。", nameof(path));
+        }
+        // 必须走原始 Arguments 拼接（ArgumentList 会整体加引号破坏开关解析）；
+        // Windows 文件名不允许含引号，上面的守卫保证拼接不引入额外参数
+        var psi = new System.Diagnostics.ProcessStartInfo("explorer.exe") { UseShellExecute = true };
+        psi.Arguments = $"/select,\"{path}\"";
+        System.Diagnostics.Process.Start(psi);
     }
 
     private const uint FO_DELETE = 3;

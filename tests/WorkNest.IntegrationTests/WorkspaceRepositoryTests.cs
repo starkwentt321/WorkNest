@@ -6,7 +6,7 @@ using Xunit;
 
 namespace WorkNest.IntegrationTests;
 
-/// <summary>工作区仓储：增删改查、级联删除、最近使用时间。</summary>
+/// <summary>工作区仓储：增删改查、级联删除。</summary>
 public sealed class WorkspaceRepositoryTests : IDisposable
 {
     private readonly TempWorkNestRoot _root = new();
@@ -100,20 +100,6 @@ public sealed class WorkspaceRepositoryTests : IDisposable
         // 关联行随工作区级联消失
         Assert.Equal(0, await _repository.GetResourceCountAsync(workspace.Id));
         Assert.Empty(await resourceRepository.GetLinkedWorkspaceIdsAsync(resourceId));
-    }
-
-    [Fact]
-    public async Task TouchLastUsed_WritesUtcTime()
-    {
-        var workspace = NewWorkspace();
-        workspace.Id = await _repository.AddAsync(workspace);
-        var utc = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
-
-        await _repository.TouchLastUsedAsync(workspace.Id, utc);
-
-        var loaded = await _repository.GetAsync(workspace.Id);
-        Assert.NotNull(loaded);
-        Assert.Equal(utc, loaded!.LastUsedAt);
     }
 
     public void Dispose() => _root.Dispose();

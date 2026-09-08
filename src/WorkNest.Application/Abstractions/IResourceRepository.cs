@@ -37,6 +37,13 @@ public interface IResourceRepository
     /// <summary>按唯一键查找已存在资源（存在即复用，不重复建档）。</summary>
     Task<ResourceItem?> FindByKeyAsync(ResourceKey key);
 
+    /// <summary>
+    /// 一次性取回全部资源唯一键，供导入预览等批量查重场景替代循环内逐条 FindByKeyAsync；
+    /// Arguments/WorkingDirectory 已按 SQL 口径归一为空串（非 null），
+    /// Target 的大小写不敏感比较由消费侧以等价比较器处理。
+    /// </summary>
+    Task<IReadOnlyList<ResourceKey>> GetAllKeysAsync();
+
     Task<ResourceItem?> GetAsync(int id);
 
     /// <summary>插入资源与标签并回填 Id。</summary>
@@ -44,9 +51,6 @@ public interface IResourceRepository
 
     /// <summary>更新资源与标签（重建标签集合）。</summary>
     Task UpdateAsync(ResourceItem item, IReadOnlyList<string> tags);
-
-    /// <summary>删除资源及其标签、使用记录与全部关联。</summary>
-    Task DeleteAsync(int resourceId);
 
     Task AddLinkAsync(int workspaceId, int resourceId, bool isPinned, int sortOrder);
 

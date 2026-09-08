@@ -23,6 +23,7 @@
             <conv:PinMenuHeaderConverter x:Key="PinMenuHeader"/>
             <conv:ColorToBrushConverter x:Key="ColorToBrush"/>
             <conv:InverseBoolConverter x:Key="InverseBool"/>
+            <conv:ImageTileViewportConverter x:Key="ImageTileViewport"/>
             <BooleanToVisibilityConverter x:Key="BoolToVis"/>
         </ResourceDictionary>
     </Window.Resources>
@@ -37,11 +38,27 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- 背景位于内容下层，不参与命中测试，文字和选择状态保持原有透明度。 -->
-        <Image Grid.RowSpan="5" MaxWidth="300" MaxHeight="300" Stretch="Uniform"
-               HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False"
+        <!-- 背景按“显示方式”渲染：Image 负责非平铺模式（缩放/对齐/尺寸上限随模式绑定），
+             Rectangle+ImageBrush 专管平铺；两层都垫在内容下、不参与命中测试，透明度只作用于背景。 -->
+        <Image Grid.RowSpan="5"
+               Stretch="{Binding BackgroundSettings.ImageStretch, RelativeSource={RelativeSource AncestorType=Window}}"
+               MaxWidth="{Binding BackgroundSettings.ImageMaxSize, RelativeSource={RelativeSource AncestorType=Window}}"
+               MaxHeight="{Binding BackgroundSettings.ImageMaxSize, RelativeSource={RelativeSource AncestorType=Window}}"
+               HorizontalAlignment="{Binding BackgroundSettings.ImageHorizontalAlignment, RelativeSource={RelativeSource AncestorType=Window}}"
+               VerticalAlignment="{Binding BackgroundSettings.ImageVerticalAlignment, RelativeSource={RelativeSource AncestorType=Window}}"
+               Visibility="{Binding BackgroundSettings.IsTiled, Converter={StaticResource InverseBoolToVis}, RelativeSource={RelativeSource AncestorType=Window}}"
+               IsHitTestVisible="False"
                Source="{Binding BackgroundSettings.Source, RelativeSource={RelativeSource AncestorType=Window}}"
                Opacity="{Binding BackgroundSettings.Opacity, RelativeSource={RelativeSource AncestorType=Window}}"/>
+        <Rectangle Grid.RowSpan="5" IsHitTestVisible="False"
+                   Visibility="{Binding BackgroundSettings.IsTiled, Converter={StaticResource BoolToVis}, RelativeSource={RelativeSource AncestorType=Window}}"
+                   Opacity="{Binding BackgroundSettings.Opacity, RelativeSource={RelativeSource AncestorType=Window}}">
+            <Rectangle.Fill>
+                <ImageBrush TileMode="Tile" ViewportUnits="Absolute"
+                            ImageSource="{Binding BackgroundSettings.Source, RelativeSource={RelativeSource AncestorType=Window}}"
+                            Viewport="{Binding BackgroundSettings.Source, Converter={StaticResource ImageTileViewport}, RelativeSource={RelativeSource AncestorType=Window}}"/>
+            </Rectangle.Fill>
+        </Rectangle>
 
         <!-- ===== 顶部栏：工作区下拉 → 搜索 → 新增 → 置顶 → 设置（决策 108） ===== -->
         <DockPanel Grid.Row="0" Margin="8,8,8,6" LastChildFill="True">
@@ -113,16 +130,47 @@
             <DockPanel Margin="8,0,0,0" LastChildFill="True">
                 <CheckBox DockPanel.Dock="Right" Content="全部" IsChecked="{Binding SearchAll}" VerticalAlignment="Center"
                           Margin="6,0,0,0" ToolTip="搜索全部工作区"
+                          Visibility="{Binding IsBrowsingFolder, Converter={StaticResource InverseBoolToVis}}"
                           IsEnabled="{Binding IsRecentView, Converter={StaticResource InverseBool}}"/>
                 <Grid>
-                    <TextBox x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
-                    <TextBlock Text="搜索名称/标签/路径" Margin="9,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                    <TextBox x:Name="SearchBox" Padding="8,0,28,0" AutomationProperties.Name="搜索资源">
+                        <TextBox.Style>
+                            <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+                                <Setter Property="Text" Value="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"/>
+                                <Setter Property="ToolTip" Value="搜索名称/标签/路径（Ctrl+F）"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsBrowsingFolder}" Value="True">
+                                        <Setter Property="Text" Value="{Binding FolderBrowser.SearchText, UpdateSourceTrigger=PropertyChanged}"/>
+                                        <Setter Property="ToolTip" Value="按文件名搜索当前目录（Ctrl+F）"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBox.Style>
+                    </TextBox>
+                    <Button Content="×" HorizontalAlignment="Right" Width="24" Margin="0,2,2,2"
+                            Padding="0" ToolTip="清空搜索" AutomationProperties.Name="清空搜索"
+                            Click="ClearSearch_Click">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <TextBlock Margin="9,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"
                                TextTrimming="CharacterEllipsis"
                                Foreground="{DynamicResource FgSecondary}">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="搜索名称/标签/路径"/>
                                 <Setter Property="Visibility" Value="Collapsed"/>
                                 <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsBrowsingFolder}" Value="True">
+                                        <Setter Property="Text" Value="搜索当前目录的文件名"/>
+                                    </DataTrigger>
                                     <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
                                         <Setter Property="Visibility" Value="Visible"/>
                                     </DataTrigger>
@@ -197,7 +245,7 @@
                 </ListView.InputBindings>
                 <ListView.View>
                     <GridView AllowsColumnReorder="False">
-                        <GridViewColumn Width="190">
+                        <GridViewColumn x:Name="NameColumn" Width="190">
                             <GridViewColumnHeader Tag="Name" Click="ColumnHeader_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="名称"/>
@@ -223,7 +271,7 @@
                                 </DataTemplate>
                             </GridViewColumn.CellTemplate>
                         </GridViewColumn>
-                        <GridViewColumn Width="62">
+                        <GridViewColumn x:Name="TypeColumn" Width="62">
                             <GridViewColumnHeader Tag="Type" Click="ColumnHeader_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="类型"/>
@@ -236,7 +284,7 @@
                                 </DataTemplate>
                             </GridViewColumn.CellTemplate>
                         </GridViewColumn>
-                        <GridViewColumn Width="180">
+                        <GridViewColumn x:Name="TargetColumn" Width="180">
                             <GridViewColumnHeader Tag="Target" Click="ColumnHeader_Click">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="路径"/>
@@ -462,6 +510,23 @@
                 </Border>
             </Grid>
         </Grid>
+
+        <!-- 加载与无结果分开显示，避免把加载失败解释为没有匹配。 -->
+        <Border x:Name="ResourceLoadingPanel" Grid.Row="3" Background="{DynamicResource Bg}" Margin="0,30,0,0"
+                Visibility="{Binding ShowResourceLoading, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="正在加载…" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <Border x:Name="SearchEmptyPanel" Grid.Row="3" Background="{DynamicResource Bg}" Margin="0,30,0,0"
+                Visibility="{Binding ShowSearchEmpty, Converter={StaticResource BoolToVis}}">
+            <StackPanel VerticalAlignment="Center" Margin="20">
+                <TextBlock Text="{Binding SearchEmptyMessage}" TextWrapping="Wrap" TextAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
+                    <Button Content="搜索全部工作区" Click="ExpandSearch_Click" Margin="0,0,8,0"
+                            Visibility="{Binding CanExpandSearch, Converter={StaticResource BoolToVis}}"/>
+                    <Button Content="清空条件" Click="ClearSearch_Click"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
 
         <!-- ===== 底部状态栏（决策 57/118） ===== -->
         <Border Grid.Row="4" Background="{DynamicResource Bg}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="10,4">

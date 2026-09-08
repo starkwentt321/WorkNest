@@ -66,35 +66,6 @@ public static class WindowController
                && Math.Min(vs.Bottom, rect.Bottom) - Math.Max(vs.Top, rect.Top) >= 60;
     }
 
-    /// <summary>保存布局（异步落盘，不阻塞 UI）。最小化/最大化时不覆盖，保留最近一次正常边界。</summary>
-    public static void Save(Window window, ISettingsService settings)
-    {
-        if (window.WindowState != WindowState.Normal)
-        {
-            return;
-        }
-
-        var placement = new WindowPlacement(
-            (int)window.Left,
-            (int)window.Top,
-            (int)Math.Round(window.ActualWidth),
-            (int)Math.Round(window.ActualHeight),
-            WindowState.Normal);
-
-        // 设置服务内部走异步 SQLite；放线程池执行，规避 UI 线程同步等待造成死锁
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await settings.SetAsync(SettingKeys.WindowBounds, placement);
-            }
-            catch (Exception ex)
-            {
-                WorkNestLog.Warning("Window", "保存窗口位置失败", ex);
-            }
-        });
-    }
-
     /// <summary>退出路径用的同步保存：线程池执行并限时等待，确保进程结束前落盘完成。</summary>
     public static void SaveAndWait(Window window, ISettingsService settings)
     {

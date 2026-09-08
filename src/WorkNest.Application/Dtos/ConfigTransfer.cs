@@ -93,8 +93,6 @@ public sealed class ImportPreview
 
     public required int SchemaVersion { get; init; }
 
-    public DateTime? ExportedAt { get; init; }
-
     public required List<ImportWorkspacePreview> Workspaces { get; init; }
 
     /// <summary>任一工作区选择了覆盖导入：需要二次确认并自动创建安全快照（决策 85）。</summary>

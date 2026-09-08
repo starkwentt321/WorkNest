@@ -1,11 +1,13 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
-using System.IO;
+using System.Reflection;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using WorkNest.Application.Abstractions;
+using WorkNest.Application.Services;
+using WorkNest.App.Services;
 using WorkNest.App.Themes;
+using WorkNest.Platform.Windows.Hotkeys;
 
 namespace WorkNest.App.ViewModels;
 
@@ -24,6 +26,11 @@ public partial class SettingsViewModel : ObservableObject
     private readonly IImportService _importService;
     private readonly IWorkspaceService _workspaceService;
     private readonly IAppRestart _appRestart;
+    private readonly IAppDialogs _dialogs;
+    private readonly IFilePicker _filePicker;
+
+    // 恢复备份的排他阶段需要挂起自动快照;可为 null(纯 VM 测试场景,不触发恢复路径)
+    private readonly DebouncedBackupScheduler? _backupScheduler;
 
     public SettingsViewModel(
         ISettingsService settingsService,
@@ -33,7 +40,10 @@ public partial class SettingsViewModel : ObservableObject
         IExportService exportService,
         IImportService importService,
         IWorkspaceService workspaceService,
-        IAppRestart appRestart)
+        IAppRestart appRestart,
+        IAppDialogs dialogs,
+        IFilePicker filePicker,
+        DebouncedBackupScheduler? backupScheduler = null)
     {
         _settingsService = settingsService;
         _autostartService = autostartService;
@@ -43,10 +53,19 @@ public partial class SettingsViewModel : ObservableObject
         _importService = importService;
         _workspaceService = workspaceService;
         _appRestart = appRestart;
+        _dialogs = dialogs;
+        _filePicker = filePicker;
+        _backupScheduler = backupScheduler;
     }
 
-    /// <summary>弹窗归属：SettingsWindow 构造时注入，保证 MessageBox/文件对话框保持模态。</summary>
-    internal Window? WindowOwner { get; set; }
+    /// <summary>关于页展示的版本号：取当前程序集版本，只保留主/次/构建号三段。</summary>
+    public string VersionDisplay { get; } = FormatVersion();
+
+    private static string FormatVersion()
+    {
+        var version = Assembly.GetExecutingAssembly().GetName().Version;
+        return version is null ? "-" : version.ToString(3);
+    }
 
     // ============ 常规 ============
 
@@ -156,32 +175,27 @@ public partial class SettingsViewModel : ObservableObject
     private static string ToGestureKey(string display) =>
         display.Length == 1 && char.IsAsciiDigit(display[0]) ? "D" + display : display;
 
-    /// <summary>手势串 → 复选框状态（LoadAsync 回填用）；无法解析时返回 null。</summary>
+    /// <summary>
+    /// 手势串 → 复选框状态（LoadAsync 回填用）；无法解析时返回 null。
+    /// 修饰键与键位的合法性解析复用平台层 HotkeyGesture（与热键注册同一套规则），显示名组装留在此处。
+    /// </summary>
     private static (bool Ctrl, bool Alt, bool Shift, bool Win, string KeyDisplay)? ParseGesture(string gesture)
     {
-        bool ctrl = false, alt = false, shift = false, win = false;
-        string? key = null;
-        foreach (var part in gesture.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        if (!HotkeyGesture.TryParse(gesture, out var parsed))
         {
-            switch (part.ToLowerInvariant())
-            {
-                case "ctrl" or "control": ctrl = true; break;
-                case "alt": alt = true; break;
-                case "shift": shift = true; break;
-                case "win" or "windows": win = true; break;
-                default:
-                    if (key is not null)
-                    {
-                        return null; // 多于一个键位，不符合约定
-                    }
-                    key = part.Length == 2 && part[0] is 'd' or 'D' && char.IsAsciiDigit(part[1])
-                        ? part[1].ToString() // "D5" → 显示 "5"
-                        : part;
-                    break;
-            }
+            return null;
         }
-
-        return key is null || (!ctrl && !alt && !shift && !win) ? null : (ctrl, alt, shift, win, key);
+        // 数字键位以平台枚举名存储（"D0".."D9"），回显转界面显示名 "0".."9"；其余键位名原样
+        var keyDisplay = parsed.KeyName.Length == 2
+                         && parsed.KeyName[0] is 'd' or 'D'
+                         && char.IsAsciiDigit(parsed.KeyName[1])
+            ? parsed.KeyName[1].ToString()
+            : parsed.KeyName;
+        return (parsed.Modifiers.HasFlag(HotkeyModifiers.Control),
+                parsed.Modifiers.HasFlag(HotkeyModifiers.Alt),
+                parsed.Modifiers.HasFlag(HotkeyModifiers.Shift),
+                parsed.Modifiers.HasFlag(HotkeyModifiers.Win),
+                keyDisplay);
     }
 
     [RelayCommand]
@@ -332,18 +346,23 @@ public partial class SettingsViewModel : ObservableObject
             return;
         }
 
-        var confirm = MessageBox.Show(WindowOwner,
-            "将用所选备份覆盖当前数据。\n恢复前会自动创建当前状态的安全快照，恢复完成后应用将自动重启。\n\n确定恢复？",
-            "恢复备份", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirm != MessageBoxResult.Yes)
+        // 恢复覆盖当前数据的破坏性确认；模态归属由 IAppDialogs 实现内解析
+        if (!_dialogs.Confirm("恢复备份",
+                "将用所选备份覆盖当前数据。\n恢复前会自动创建当前状态的安全快照，恢复完成后应用将自动重启。\n\n确定恢复？",
+                MessageBoxImage.Warning))
         {
             return;
         }
 
         try
         {
-            // 决策 86：实现内部先对当前状态做安全快照，快照失败则中止恢复
-            await _backupService.RestoreAsync(backup.FilePath);
+            // 决策 86：实现内部先对当前状态做安全快照，快照失败则中止恢复。
+            // 恢复会整库替换数据库文件：期间挂起防抖快照调度器，避免到期的自动快照与文件替换并发
+            //（挂起范围只包恢复调用本身，不含确认对话框与重启；解除后不补拍，恢复流程自带 pre-restore 快照兜底）
+            using (_backupScheduler?.Suspend())
+            {
+                await _backupService.RestoreAsync(backup.FilePath);
+            }
             _appRestart.Restart(); // 整进程重启以释放数据库句柄并重载缓存
         }
         catch (Exception ex)
@@ -359,34 +378,14 @@ public partial class SettingsViewModel : ObservableObject
     private void Import() => RequestImport?.Invoke(this, EventArgs.Empty);
 
     /// <summary>导出对话框 VM 工厂（SettingsWindow.xaml.cs 调用）。</summary>
-    public ExportViewModel CreateExportViewModel() => new(_workspaceService, _exportService);
+    public ExportViewModel CreateExportViewModel() => new(_workspaceService, _exportService, _filePicker);
 
     /// <summary>导入预览对话框 VM 工厂（SettingsWindow.xaml.cs 调用）。</summary>
-    public ImportPreviewViewModel CreateImportPreviewViewModel(string filePath) => new(_importService, filePath);
+    public ImportPreviewViewModel CreateImportPreviewViewModel(string filePath) => new(_importService, _dialogs, filePath);
 
     [RelayCommand]
-    private void OpenLogs() => OpenDir(Path.Combine(GetDataRoot(), "Logs"));
+    private void OpenLogs() => _ = AppPaths.OpenOrCreateInExplorer(AppPaths.LogsDir);
 
     [RelayCommand]
-    private void OpenData() => OpenDir(Path.Combine(GetDataRoot(), "Data"));
-
-    /// <summary>用户数据根目录：%LocalAppData%\WorkNest（决策 100）。</summary>
-    private static string GetDataRoot() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WorkNest");
-
-    private static void OpenDir(string path)
-    {
-        try
-        {
-            if (!Directory.Exists(path))
-            {
-                Directory.CreateDirectory(path);
-            }
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
-        }
-        catch
-        {
-            // 打开目录失败不打断设置操作
-        }
-    }
+    private void OpenData() => _ = AppPaths.OpenOrCreateInExplorer(AppPaths.DataDir);
 }

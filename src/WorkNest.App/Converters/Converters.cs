@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace WorkNest.App.Converters;
 
@@ -44,6 +45,18 @@ public sealed class InverseBoolConverter : IValueConverter
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         value is not true;
+}
+
+/// <summary>背景平铺单元：图片解码尺寸（DIP）矩形；空源返回空矩形让画刷不绘制。</summary>
+public sealed class ImageTileViewportConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is BitmapSource bitmap && bitmap.PixelWidth > 0 && bitmap.PixelHeight > 0
+            ? new Rect(0, 0, bitmap.PixelWidth, bitmap.PixelHeight)
+            : Rect.Empty;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>工作区颜色字符串 → Brush；解析失败回退强调色，同色复用冻结实例。</summary>

@@ -176,9 +176,9 @@ public sealed class WorkspaceServiceTests
         // 成功启动才更新 LastUsedAt：A 早于 B，C 从未启动（null）；
         // A 先被触碰，让期望顺序 [B,A,C] 有别于创建顺序 [A,B,C]，才有区分度
         env.Clock.Advance(TimeSpan.FromMinutes(10));
-        await env.Workspaces.TouchLastUsedAsync(a.Id, env.Clock.UtcNow);
+        env.Workspaces.SeedLastUsed(a.Id, env.Clock.UtcNow);
         env.Clock.Advance(TimeSpan.FromMinutes(10));
-        await env.Workspaces.TouchLastUsedAsync(b.Id, env.Clock.UtcNow);
+        env.Workspaces.SeedLastUsed(b.Id, env.Clock.UtcNow);
 
         var ordered = await env.Service.GetOrderedAsync();
 

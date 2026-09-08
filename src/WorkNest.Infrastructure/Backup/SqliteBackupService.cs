@@ -89,6 +89,11 @@ public sealed class SqliteBackupService : IBackupService
             // 恢复前先对当前状态做安全快照；快照失败则整体中止，绝不动数据库文件
             var preRestorePath = await CreateSnapshotAsync("pre-restore");
 
+            // 覆盖主库前先清空整个连接池：池中空闲连接可能仍持有 db/wal/shm 文件句柄，
+            // 不清空的话 File.Copy 会因目标被占用而失败、侧文件也删不掉。
+            // 必须在安全快照之后执行（快照自身还需要通过池化连接做 checkpoint）
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
             try
             {
                 File.Copy(tempRestorePath, _db.DbFilePath, overwrite: true);
@@ -140,15 +145,26 @@ public sealed class SqliteBackupService : IBackupService
         }
     }
 
-    /// <summary>删除主库残留的 wal/shm 辅助文件，避免恢复后被误判为脏页。</summary>
+    /// <summary>
+    /// 删除主库残留的 wal/shm 辅助文件，避免恢复后被误判为脏页。
+    /// 单个删除失败只记日志并继续（尽力删除）：主库覆盖已成功，恢复流程不应因清理侧文件而中断。
+    /// </summary>
     private void DeleteSideFiles()
     {
         foreach (var suffix in new[] { "-wal", "-shm" })
         {
             var sideFile = _db.DbFilePath + suffix;
-            if (File.Exists(sideFile))
+            if (!File.Exists(sideFile))
+            {
+                continue;
+            }
+            try
             {
                 File.Delete(sideFile);
+            }
+            catch (Exception ex)
+            {
+                WorkNestLog.Warning("BackupService", $"删除侧文件失败（恢复继续）：{sideFile}", ex);
             }
         }
     }

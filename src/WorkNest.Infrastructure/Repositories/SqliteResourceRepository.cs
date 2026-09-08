@@ -68,23 +68,13 @@ public sealed class SqliteResourceRepository : IResourceRepository
 
     public async Task<ResourceItem?> FindByKeyAsync(ResourceKey key)
     {
-        // 参数侧把 null 归一为 ''，与唯一索引 IFNULL(...) 表达式严格对齐；
-        // Target 比较显式声明 NOCASE，实现路径大小写不敏感查重
         using var connection = _db.OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id, Type, Name, Target, Arguments, WorkingDirectory, CreatedAt, UpdatedAt
             FROM ResourceItem
-            WHERE Type = $type
-              AND Target = $target COLLATE NOCASE
-              AND IFNULL(Arguments, '') = $arguments
-              AND IFNULL(WorkingDirectory, '') = $workingDirectory
-            LIMIT 1;
             """;
-        command.Parameters.AddWithValue("$type", (int)key.Type);
-        command.Parameters.AddWithValue("$target", key.Target);
-        command.Parameters.AddWithValue("$arguments", key.Arguments ?? string.Empty);
-        command.Parameters.AddWithValue("$workingDirectory", key.WorkingDirectory ?? string.Empty);
+        AppendUniqueKeyFilter(command, key.Type, key.Target, key.Arguments, key.WorkingDirectory);
         using var reader = await command.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
         {
@@ -92,6 +82,32 @@ public sealed class SqliteResourceRepository : IResourceRepository
         }
 
         return MapItem(reader);
+    }
+
+    /// <summary>
+    /// 批量取回唯一键；单条 SELECT 一次读全表键列，
+    /// 与 FindByKeyAsync / 唯一索引 UX_ResourceItem_Key 同口径（IFNULL 归一空串）。
+    /// </summary>
+    public async Task<IReadOnlyList<ResourceKey>> GetAllKeysAsync()
+    {
+        var keys = new List<ResourceKey>();
+        using var connection = _db.OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Type, Target, IFNULL(Arguments, ''), IFNULL(WorkingDirectory, '')
+            FROM ResourceItem;
+            """;
+        using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            keys.Add(new ResourceKey(
+                (ResourceType)reader.GetInt32(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3)));
+        }
+
+        return keys;
     }
 
     public async Task<ResourceItem?> GetAsync(int id)
@@ -116,28 +132,12 @@ public sealed class SqliteResourceRepository : IResourceRepository
     public async Task<int> AddAsync(ResourceItem item, IReadOnlyList<string> tags)
     {
         using var connection = _db.OpenConnection();
-        ExecuteRaw(connection, "BEGIN IMMEDIATE;");
+        SqliteRaw.Execute(connection, "BEGIN IMMEDIATE;");
         try
         {
-            using (var command = connection.CreateCommand())
-            {
-                command.CommandText = """
-                    INSERT INTO ResourceItem (Type, Name, Target, Arguments, WorkingDirectory, CreatedAt, UpdatedAt)
-                    VALUES ($type, $name, $target, $arguments, $workingDirectory, $createdAt, $updatedAt);
-                    SELECT last_insert_rowid();
-                    """;
-                command.Parameters.AddWithValue("$type", (int)item.Type);
-                command.Parameters.AddWithValue("$name", item.Name);
-                command.Parameters.AddWithValue("$target", item.Target);
-                command.Parameters.AddWithValue("$arguments", (object?)item.Arguments ?? DBNull.Value);
-                command.Parameters.AddWithValue("$workingDirectory", (object?)item.WorkingDirectory ?? DBNull.Value);
-                command.Parameters.AddWithValue("$createdAt", SqliteTime.ToUtc(item.CreatedAt));
-                command.Parameters.AddWithValue("$updatedAt", SqliteTime.ToUtc(item.UpdatedAt));
-                item.Id = Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
-            }
-
-            InsertTags(connection, item.Id, tags);
-            ExecuteRaw(connection, "COMMIT;");
+            // 与导入建档共用同一插入例程（INSERT 全字段 + Id 回填 + 标签写入），避免重复实现
+            await InsertItemAsync(connection, item, tags);
+            SqliteRaw.Execute(connection, "COMMIT;");
             WorkNestLog.Info("ResourceRepository", $"新增资源 Id={item.Id} Type={item.Type} Target={item.Target}（{tags.Count} 个标签）。");
             return item.Id;
         }
@@ -151,7 +151,7 @@ public sealed class SqliteResourceRepository : IResourceRepository
     public async Task UpdateAsync(ResourceItem item, IReadOnlyList<string> tags)
     {
         using var connection = _db.OpenConnection();
-        ExecuteRaw(connection, "BEGIN IMMEDIATE;");
+        SqliteRaw.Execute(connection, "BEGIN IMMEDIATE;");
         try
         {
             using (var command = connection.CreateCommand())
@@ -185,26 +185,12 @@ public sealed class SqliteResourceRepository : IResourceRepository
             }
 
             InsertTags(connection, item.Id, tags);
-            ExecuteRaw(connection, "COMMIT;");
+            SqliteRaw.Execute(connection, "COMMIT;");
         }
         catch
         {
             RollbackQuietly(connection);
             throw;
-        }
-    }
-
-    /// <summary>删除资源本体；标签、使用记录与全部工作区关联由外键级联清理。</summary>
-    public async Task DeleteAsync(int resourceId)
-    {
-        using var connection = _db.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM ResourceItem WHERE Id = $id;";
-        command.Parameters.AddWithValue("$id", resourceId);
-        var affected = await command.ExecuteNonQueryAsync();
-        if (affected > 0)
-        {
-            WorkNestLog.Info("ResourceRepository", $"已删除资源 Id={resourceId}（标签/使用记录/关联由外键级联清理）。");
         }
     }
 
@@ -227,7 +213,7 @@ public sealed class SqliteResourceRepository : IResourceRepository
     public async Task<int> ImportLinksAsync(int workspaceId, IReadOnlyList<PendingResourceLink> links, bool replaceExisting)
     {
         using var connection = _db.OpenConnection();
-        ExecuteRaw(connection, "BEGIN IMMEDIATE;");
+        SqliteRaw.Execute(connection, "BEGIN IMMEDIATE;");
         try
         {
             var processed = new HashSet<int>();
@@ -282,7 +268,7 @@ public sealed class SqliteResourceRepository : IResourceRepository
                 }
             }
 
-            ExecuteRaw(connection, "COMMIT;");
+            SqliteRaw.Execute(connection, "COMMIT;");
             WorkNestLog.Info("ResourceRepository",
                 $"工作区 Id={workspaceId} 导入完成：新增关联 {added} 条（replaceExisting={replaceExisting}）。");
             return added;
@@ -294,13 +280,30 @@ public sealed class SqliteResourceRepository : IResourceRepository
         }
     }
 
-    /// <summary>事务连接内的唯一键查重；参数侧 null 归一为 ''，与唯一索引 IFNULL(...) 表达式严格对齐。</summary>
+    /// <summary>事务连接内的唯一键查重；WHERE/参数口径经 AppendUniqueKeyFilter 与 FindByKeyAsync 共享。</summary>
     private static async Task<int?> FindIdByKeyAsync(
         SqliteConnection connection, ResourceType type, string target, string? arguments, string? workingDirectory)
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id FROM ResourceItem
+            """;
+        AppendUniqueKeyFilter(command, type, target, arguments, workingDirectory);
+        var result = await command.ExecuteScalarAsync();
+        return result is null || result is DBNull ? null : Convert.ToInt32(result, CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// 拼接唯一键查重 WHERE 子句并绑定参数：与唯一索引 UX_ResourceItem_Key 的 IFNULL(...) 表达式严格对齐，
+    /// 参数侧把 null 归一为 ''；Target 比较显式声明 NOCASE，实现路径大小写不敏感查重。
+    /// FindByKeyAsync 与 FindIdByKeyAsync 的 SELECT 列不同，WHERE/参数归一口径必须保持一致。
+    /// </summary>
+    private static void AppendUniqueKeyFilter(
+        SqliteCommand command, ResourceType type, string target, string? arguments, string? workingDirectory)
+    {
+        // 片段以空行开头：与基础 SELECT 拼接时补出 WHERE 前的换行（与 LinkSelectSql 拼接风格一致）
+        command.CommandText += """
+
             WHERE Type = $type
               AND Target = $target COLLATE NOCASE
               AND IFNULL(Arguments, '') = $arguments
@@ -311,8 +314,6 @@ public sealed class SqliteResourceRepository : IResourceRepository
         command.Parameters.AddWithValue("$target", target);
         command.Parameters.AddWithValue("$arguments", arguments ?? string.Empty);
         command.Parameters.AddWithValue("$workingDirectory", workingDirectory ?? string.Empty);
-        var result = await command.ExecuteScalarAsync();
-        return result is null || result is DBNull ? null : Convert.ToInt32(result, CultureInfo.InvariantCulture);
     }
 
     /// <summary>事务连接内插入资源与标签并返回自增 Id。</summary>
@@ -389,7 +390,7 @@ public sealed class SqliteResourceRepository : IResourceRepository
     public async Task RemoveLinkAsync(int workspaceId, int resourceId)
     {
         using var connection = _db.OpenConnection();
-        ExecuteRaw(connection, "BEGIN IMMEDIATE;");
+        SqliteRaw.Execute(connection, "BEGIN IMMEDIATE;");
         try
         {
             using (var deleteLink = connection.CreateCommand())
@@ -413,7 +414,7 @@ public sealed class SqliteResourceRepository : IResourceRepository
                 WorkNestLog.Info("ResourceRepository", $"资源 Id={resourceId} 已无任何关联，随最后关联一并删除。");
             }
 
-            ExecuteRaw(connection, "COMMIT;");
+            SqliteRaw.Execute(connection, "COMMIT;");
         }
         catch
         {
@@ -445,7 +446,7 @@ public sealed class SqliteResourceRepository : IResourceRepository
     public async Task RecordSuccessAsync(int workspaceId, int resourceId, DateTime utc, int? durationMs)
     {
         using var connection = _db.OpenConnection();
-        ExecuteRaw(connection, "BEGIN IMMEDIATE;");
+        SqliteRaw.Execute(connection, "BEGIN IMMEDIATE;");
         try
         {
             using (var touchLink = connection.CreateCommand())
@@ -486,7 +487,7 @@ public sealed class SqliteResourceRepository : IResourceRepository
                 await insertRecord.ExecuteNonQueryAsync();
             }
 
-            ExecuteRaw(connection, "COMMIT;");
+            SqliteRaw.Execute(connection, "COMMIT;");
         }
         catch
         {
@@ -581,18 +582,11 @@ public sealed class SqliteResourceRepository : IResourceRepository
         command.Parameters.AddWithValue(parameterName, value.HasValue ? value.Value : DBNull.Value);
     }
 
-    private static void ExecuteRaw(SqliteConnection connection, string text)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = text;
-        command.ExecuteNonQuery();
-    }
-
     private static void RollbackQuietly(SqliteConnection connection)
     {
         try
         {
-            ExecuteRaw(connection, "ROLLBACK;");
+            SqliteRaw.Execute(connection, "ROLLBACK;");
         }
         catch
         {

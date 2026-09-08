@@ -109,20 +109,6 @@ public sealed class SqliteWorkspaceRepository : IWorkspaceRepository
         }
     }
 
-    public async Task TouchLastUsedAsync(int id, DateTime utc)
-    {
-        using var connection = _db.OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            UPDATE Workspace
-            SET LastUsedAt = $utc, UpdatedAt = $utc
-            WHERE Id = $id;
-            """;
-        command.Parameters.AddWithValue("$id", id);
-        command.Parameters.AddWithValue("$utc", SqliteTime.ToUtc(utc));
-        await command.ExecuteNonQueryAsync();
-    }
-
     public async Task<int> GetResourceCountAsync(int workspaceId)
     {
         using var connection = _db.OpenConnection();

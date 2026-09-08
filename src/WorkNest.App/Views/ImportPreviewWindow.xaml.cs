@@ -14,7 +14,6 @@ public partial class ImportPreviewWindow : Window
         InitializeComponent();
         ViewModel = viewModel;
         DataContext = viewModel;
-        ViewModel.WindowOwner = this;
         ViewModel.ImportCompleted += (_, _) => DialogResult = true; // 成功后关闭，由设置窗口统一收口
         ThemeManager.Apply(this, ThemeManager.CurrentTheme);
         Loaded += async (_, _) => await ViewModel.LoadAsync();

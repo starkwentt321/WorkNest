@@ -84,13 +84,22 @@
                         DataContext="{Binding BackgroundSettings, RelativeSource={RelativeSource AncestorType=Window}}">
                     <StackPanel IsEnabled="{Binding ApplyCommand.IsRunning, Converter={StaticResource InverseBool}}">
                         <TextBlock Style="{StaticResource GroupTitle}" Text="背景图片"/>
-                        <TextBlock Style="{StaticResource MutedText}" Text="图片按比例显示在主窗口右下角。留空使用内置默认图片。"/>
+                        <TextBlock Style="{StaticResource MutedText}" Text="选择背景图片的显示方式，点击“应用背景”后生效；留空使用内置默认图片。"/>
                         <TextBox Text="{Binding ImagePath, UpdateSourceTrigger=PropertyChanged}" Margin="0,8,0,6"
                                  AutomationProperties.Name="背景图片路径"/>
                         <WrapPanel>
                             <Button Content="选择图片…" Click="ChooseBackground_Click"/>
                             <Button Content="恢复默认" Command="{Binding ResetCommand}" Margin="8,0,0,0"/>
                         </WrapPanel>
+                        <DockPanel Margin="0,12,0,0">
+                            <TextBlock DockPanel.Dock="Left" Text="显示方式" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <ComboBox Width="140" HorizontalAlignment="Left"
+                                      ItemsSource="{Binding ModeOptions}"
+                                      SelectedValuePath="Key"
+                                      DisplayMemberPath="Value"
+                                      SelectedValue="{Binding SelectedMode, UpdateSourceTrigger=PropertyChanged}"
+                                      AutomationProperties.Name="背景显示方式"/>
+                        </DockPanel>
                         <TextBlock Text="{Binding Transparency, StringFormat='透明度：{0:0}%'}" Margin="0,12,0,4"/>
                         <Slider Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
                                 Value="{Binding Transparency, UpdateSourceTrigger=PropertyChanged}"

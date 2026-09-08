@@ -48,6 +48,4 @@ public sealed class WorkspaceOptionViewModel
     public ImageSource? Icon => Workspace is null ? null : WorkspaceIconFactory.Create(Workspace.Color);
 
     public int ResourceCount => Workspace?.ResourceCount ?? 0;
-
-    public int WorkspaceId => Workspace?.Id ?? 0;
 }

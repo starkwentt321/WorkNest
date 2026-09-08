@@ -6,9 +6,6 @@ namespace WorkNest.Application.Abstractions;
 /// <summary>工作区用例服务。</summary>
 public interface IWorkspaceService
 {
-    /// <summary>当前排序模式（最近使用 / 手动）。</summary>
-    WorkspaceSortMode CurrentSortMode { get; }
-
     /// <summary>按当前模式排序的全部工作区。</summary>
     Task<IReadOnlyList<WorkspaceDto>> GetOrderedAsync();
 

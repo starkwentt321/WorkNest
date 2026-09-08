@@ -14,12 +14,6 @@ public sealed class DbMigrator
     private readonly IReadOnlyList<IMigration> _migrations;
     private readonly string? _backupsDir;
 
-    /// <summary>生产构造：使用内置迁移清单，premigrate 备份写入数据库同级的 Backups 目录。</summary>
-    public DbMigrator(WorkNestDb db)
-        : this(db, new IMigration[] { new Migrations.Migration0001InitialSchema() }, backupsDir: null)
-    {
-    }
-
     /// <summary>测试/扩展构造：允许显式提供迁移清单与备份目录。</summary>
     public DbMigrator(WorkNestDb db, IEnumerable<IMigration> migrations, string? backupsDir = null)
     {
@@ -118,7 +112,7 @@ public sealed class DbMigrator
     /// </summary>
     private static void ApplyInOwnTransaction(SqliteConnection connection, IMigration migration)
     {
-        ExecuteRaw(connection, "BEGIN IMMEDIATE;");
+        SqliteRaw.Execute(connection, "BEGIN IMMEDIATE;");
         try
         {
             migration.Apply(connection);
@@ -129,13 +123,13 @@ public sealed class DbMigrator
             recordVersion.Parameters.AddWithValue("$appliedAt", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
             recordVersion.ExecuteNonQuery();
 
-            ExecuteRaw(connection, "COMMIT;");
+            SqliteRaw.Execute(connection, "COMMIT;");
         }
         catch (Exception ex)
         {
             try
             {
-                ExecuteRaw(connection, "ROLLBACK;");
+                SqliteRaw.Execute(connection, "ROLLBACK;");
             }
             catch (Exception rollbackEx)
             {
@@ -145,12 +139,5 @@ public sealed class DbMigrator
             WorkNestLog.Error("DbMigrator", $"迁移 v{migration.Version} 执行失败，已回滚：{migration.Description}", ex);
             throw new InvalidOperationException($"数据库迁移 v{migration.Version} 执行失败（{migration.Description}），已回滚本次迁移，数据库保持原版本。{ex.Message}", ex);
         }
-    }
-
-    private static void ExecuteRaw(SqliteConnection connection, string text)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = text;
-        command.ExecuteNonQuery();
     }
 }

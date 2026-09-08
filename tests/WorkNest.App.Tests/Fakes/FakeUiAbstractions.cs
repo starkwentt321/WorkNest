@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Media;
 using WorkNest.App.Services;
 using WorkNest.Domain;
@@ -16,7 +17,7 @@ public sealed class FakeDialogs : IAppDialogs
 
     public List<(string Title, string Message)> ConfirmCalls { get; } = [];
 
-    public bool Confirm(string title, string message)
+    public bool Confirm(string title, string message, MessageBoxImage icon = MessageBoxImage.Question)
     {
         ConfirmCalls.Add((title, message));
         return ConfirmResult;
@@ -34,9 +35,14 @@ public sealed class FakeFilePicker : IFilePicker
     /// <summary>PickFolder 的预设返回值（null = 取消）。</summary>
     public string? FolderResult { get; set; }
 
+    /// <summary>PickSaveFile 的预设返回值（null = 取消）。</summary>
+    public string? SaveFileResult { get; set; }
+
     public List<string> PickFileCalls { get; } = [];
 
     public List<string> PickFolderCalls { get; } = [];
+
+    public List<(string Title, string Filter, string InitialFileName)> PickSaveFileCalls { get; } = [];
 
     public string? PickFile(string title)
     {
@@ -48,6 +54,12 @@ public sealed class FakeFilePicker : IFilePicker
     {
         PickFolderCalls.Add(title);
         return FolderResult;
+    }
+
+    public string? PickSaveFile(string title, string filter, string initialFileName, string? initialDirectory)
+    {
+        PickSaveFileCalls.Add((title, filter, initialFileName));
+        return SaveFileResult;
     }
 }
 

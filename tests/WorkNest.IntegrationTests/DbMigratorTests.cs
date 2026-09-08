@@ -78,6 +78,47 @@ public sealed class DbMigratorTests : IDisposable
         Assert.Equal(99L, Scalar("SELECT MAX(Version) FROM SchemaVersion"));
     }
 
+    [Fact]
+    public void Migrate_FromV1ToV2_DropsViewPreferenceAndAddsResourceIndex()
+    {
+        // 先只应用 v1，模拟存量 v1 库，并写入业务数据
+        new DbMigrator(_root.CreateDb(), new IMigration[] { new Migration0001InitialSchema() }, _root.BackupsDir).Migrate();
+        Execute("INSERT INTO Workspace (Name, Color, CreatedAt, UpdatedAt) VALUES ('工作区A', '#FF0000', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');");
+        Execute("INSERT INTO ResourceItem (Type, Name, Target, CreatedAt, UpdatedAt) VALUES ('app', '记事本', 'notepad.exe', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');");
+        Execute("INSERT INTO WorkspaceResource (WorkspaceId, ResourceId) VALUES (1, 1);");
+
+        // 用完整迁移清单升级到最新，v2 应只增量应用 DROP 与 CREATE INDEX
+        var migrator = new DbMigrator(
+            _root.CreateDb(),
+            new IMigration[] { new Migration0001InitialSchema(), new Migration0002DropViewPreferenceAndAddResourceIndex() },
+            _root.BackupsDir);
+        migrator.Migrate();
+
+        Assert.Equal(2L, Scalar("SELECT MAX(Version) FROM SchemaVersion"));
+        Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ViewPreference'"));
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'IX_WorkspaceResource_Resource'"));
+        // 既有业务数据在升级后完好
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM Workspace"));
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM ResourceItem"));
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM WorkspaceResource"));
+    }
+
+    [Fact]
+    public void FreshDatabase_ProductionMigrationList_LandsOnV2Schema()
+    {
+        // 生产 DI 登记的完整迁移清单：新库应一步建到 v2，直接得到最终 schema
+        var migrator = new DbMigrator(
+            _root.CreateDb(),
+            new IMigration[] { new Migration0001InitialSchema(), new Migration0002DropViewPreferenceAndAddResourceIndex() },
+            _root.BackupsDir);
+
+        migrator.Migrate();
+
+        Assert.Equal(2L, Scalar("SELECT MAX(Version) FROM SchemaVersion"));
+        Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ViewPreference'"));
+        Assert.Equal(1L, Scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'IX_WorkspaceResource_Resource'"));
+    }
+
     private void Execute(string sql)
     {
         var db = _root.CreateDb();

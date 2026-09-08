@@ -73,6 +73,15 @@ public sealed class InMemoryResourceRepository : IResourceRepository
         return Task.FromResult(hit is null ? null : Clone(hit));
     }
 
+    /// <summary>镜像真实仓储语义：一次取回全部唯一键，Arguments/WorkingDirectory 归一空串（与 FindByKeyAsync 口径一致）。</summary>
+    public Task<IReadOnlyList<ResourceKey>> GetAllKeysAsync()
+    {
+        IReadOnlyList<ResourceKey> keys = _items
+            .Select(i => new ResourceKey(i.Type, i.Target, i.Arguments ?? string.Empty, i.WorkingDirectory ?? string.Empty))
+            .ToList();
+        return Task.FromResult(keys);
+    }
+
     public Task<ResourceItem?> GetAsync(int id) =>
         Task.FromResult(_items.Where(i => i.Id == id).Select(Clone).FirstOrDefault());
 
@@ -94,15 +103,6 @@ public sealed class InMemoryResourceRepository : IResourceRepository
 
         // 镜像“重建标签集合”语义
         _tags[item.Id] = [.. tags];
-        return Task.CompletedTask;
-    }
-
-    public Task DeleteAsync(int resourceId)
-    {
-        _items.RemoveAll(i => i.Id == resourceId);
-        _tags.Remove(resourceId);
-        _links.RemoveAll(l => l.ResourceId == resourceId);
-        _usageRecords.RemoveAll(u => u.ResourceId == resourceId);
         return Task.CompletedTask;
     }
 
@@ -255,7 +255,7 @@ public sealed class InMemoryResourceRepository : IResourceRepository
         // 同“事务”更新工作区最近使用时间（仅成功启动触发）
         if (_workspaceRepository is not null)
         {
-            _workspaceRepository.TouchLastUsedAsync(workspaceId, utc);
+            _workspaceRepository.SeedLastUsed(workspaceId, utc);
         }
 
         return Task.CompletedTask;

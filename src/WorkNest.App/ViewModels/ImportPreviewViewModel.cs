@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
+using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using WorkNest.Application.Abstractions;
 using WorkNest.Application.Dtos;
+using WorkNest.App.Services;
 
 namespace WorkNest.App.ViewModels;
 
@@ -14,16 +16,15 @@ namespace WorkNest.App.ViewModels;
 public partial class ImportPreviewViewModel : ObservableObject
 {
     private readonly IImportService _importService;
+    private readonly IAppDialogs _dialogs;
     private readonly string _filePath;
 
-    public ImportPreviewViewModel(IImportService importService, string filePath)
+    public ImportPreviewViewModel(IImportService importService, IAppDialogs dialogs, string filePath)
     {
         _importService = importService;
+        _dialogs = dialogs;
         _filePath = filePath;
     }
-
-    /// <summary>弹窗归属（ImportPreviewWindow 构造时注入）。</summary>
-    internal System.Windows.Window? WindowOwner { get; set; }
 
     public ObservableCollection<ImportWorkspaceItem> Workspaces { get; } = [];
 
@@ -54,7 +55,9 @@ public partial class ImportPreviewViewModel : ObservableObject
     {
         try
         {
-            var preview = await _importService.AnalyzeAsync(_filePath);
+            // 分析含 JSON 反序列化与键归一等 CPU 密集步骤（大文件时明显），放后台执行避免卡住 UI 线程；
+            // 异常仍由下方 catch 统一呈现，统计结果与同步执行一致
+            var preview = await Task.Run(() => _importService.AnalyzeAsync(_filePath));
             _schemaVersion = preview.SchemaVersion;
             foreach (var workspace in preview.Workspaces)
             {
@@ -95,16 +98,15 @@ public partial class ImportPreviewViewModel : ObservableObject
 
         if (preview.HasOverwrite)
         {
-            // 决策 85：覆盖导入显示影响范围并二次确认
+            // 决策 85：覆盖导入显示影响范围并二次确认（模态归属由 IAppDialogs 实现内解析）
             var overwriteNames = preview.Workspaces
                 .Where(w => w.Strategy == ImportStrategy.Overwrite)
                 .Select(w => w.Name);
-            var confirm = System.Windows.MessageBox.Show(WindowOwner,
-                "覆盖导入将清空以下工作区的现有资源关联，并按导入文件重建：\n" +
-                string.Join("、", overwriteNames) +
-                "\n\n执行前会自动创建当前状态的安全快照。确定继续？",
-                "覆盖导入确认", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning);
-            if (confirm != System.Windows.MessageBoxResult.Yes)
+            if (!_dialogs.Confirm("覆盖导入确认",
+                    "覆盖导入将清空以下工作区的现有资源关联，并按导入文件重建：\n" +
+                    string.Join("、", overwriteNames) +
+                    "\n\n执行前会自动创建当前状态的安全快照。确定继续？",
+                    MessageBoxImage.Warning))
             {
                 return;
             }

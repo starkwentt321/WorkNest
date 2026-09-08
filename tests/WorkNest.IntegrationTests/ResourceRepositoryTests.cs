@@ -33,7 +33,8 @@ public sealed class ResourceRepositoryTests : IDisposable
         return await _workspaceRepository.AddAsync(workspace);
     }
 
-    private async Task<int> AddProgramAsync(string target, string? arguments, IReadOnlyList<string>? tags = null)
+    private async Task<int> AddProgramAsync(string target, string? arguments,
+        IReadOnlyList<string>? tags = null, string? workingDirectory = null)
     {
         var item = new ResourceItem
         {
@@ -41,11 +42,29 @@ public sealed class ResourceRepositoryTests : IDisposable
             Name = "演示程序",
             Target = target,
             Arguments = arguments,
-            WorkingDirectory = null,
+            WorkingDirectory = workingDirectory,
             CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
             UpdatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
         };
         return await _repository.AddAsync(item, tags ?? []);
+    }
+
+    [Fact]
+    public async Task GetAllKeysAsync_ReturnsEveryKeyWithNullPartsNormalizedToEmptyStrings()
+    {
+        // 参数/工作目录按 null 与空串混合写入，覆盖归一的两条路径
+        await AddProgramAsync(@"C:\Tools\Alpha.exe", "-v");                       // 参数有值，工作目录 null
+        await AddProgramAsync(@"C:\Tools\Beta.exe", null, workingDirectory: @"C:\temp"); // 参数 null，工作目录有值
+        await AddProgramAsync(@"c:\tools\gamma.exe", "", workingDirectory: "");   // 均为空串，Target 小写写入
+
+        var keys = await _repository.GetAllKeysAsync();
+
+        Assert.Equal(3, keys.Count);
+        // Target 原样返回（NOCASE 是比较侧语义，键本身不折叠大小写）；
+        // Arguments/WorkingDirectory 按 SQL 口径 IFNULL 归一为空串（非 null）
+        Assert.Contains(new ResourceKey(ResourceType.Program, @"C:\Tools\Alpha.exe", "-v", ""), keys);
+        Assert.Contains(new ResourceKey(ResourceType.Program, @"C:\Tools\Beta.exe", "", @"C:\temp"), keys);
+        Assert.Contains(new ResourceKey(ResourceType.Program, @"c:\tools\gamma.exe", "", ""), keys);
     }
 
     [Fact]

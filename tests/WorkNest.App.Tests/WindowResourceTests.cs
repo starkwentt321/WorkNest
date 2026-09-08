@@ -25,9 +25,8 @@ public class WindowResourceTests
                 var browserService = new FakeFolderBrowserService();
                 var vm = new MainViewModel(new FakeWorkspaceService(), new FakeResourceService(),
                     new FakeLauncherService(), settings, new FakeAutostartService(), new FakeBackupService(),
-                    new FakeIconProvider(), new FakeHotkeyService(), new FakeExportService(),
-                    new FakeImportService(), new FakeAppRestart(), new FakeDialogs(), new FakeFilePicker(), browserService);
-                var window = new MainWindow(vm, new BackgroundImageSettings(settings));
+                    new FakeIconProvider(), new FakeDialogs(), new FakeFilePicker(), browserService);
+                var window = new MainWindow(vm, new BackgroundImageSettings(settings), () => CreateTestSettingsViewModel(settings));
                 try
                 {
                     var list = Assert.IsType<ListView>(window.FindName("ResourceList"));
@@ -64,6 +63,12 @@ public class WindowResourceTests
         finally { Assembly.SetEntryAssembly(entry); }
     }
 
+    /// <summary>设置窗口 VM 测试工厂（MainWindow 构造依赖 Func&lt;SettingsViewModel&gt;）；全套 fake，不触碰真实服务。</summary>
+    private static SettingsViewModel CreateTestSettingsViewModel(FakeSettingsService? settings = null) =>
+        new(settings ?? new FakeSettingsService(), new FakeAutostartService(), new FakeBackupService(),
+            new FakeHotkeyService(), new FakeExportService(), new FakeImportService(),
+            new FakeWorkspaceService(), new FakeAppRestart(), new FakeDialogs(), new FakeFilePicker());
+
     [Fact]
     public async Task DialogWindows_CanLoadCompiledXamlAndIcons()
     {
@@ -74,18 +79,16 @@ public class WindowResourceTests
             {
                 // 使用真实编译 XAML 发现仅构建/VM 测试无法覆盖的资源解析错误；不启动应用。
                 var settings = new FakeSettingsService();
-                var vm = new SettingsViewModel(settings, new FakeAutostartService(), new FakeBackupService(),
-                    new FakeHotkeyService(), new FakeExportService(), new FakeImportService(),
-                    new FakeWorkspaceService(), new FakeAppRestart());
+                var vm = CreateTestSettingsViewModel(settings);
                 var window = new SettingsWindow(vm, new BackgroundImageSettings(settings));
                 Assert.NotNull(window.Icon);
                 Assert.IsAssignableFrom<FrameworkElement>(window.Content);
                 window.Close();
                 Window[] related =
                 [
-                    new ExportWindow(new ExportViewModel(new FakeWorkspaceService(), new FakeExportService())),
-                    new ImportPreviewWindow(new ImportPreviewViewModel(new FakeImportService(), "unused.json")),
-                    new WorkspaceManagerWindow(new WorkspaceManagerViewModel(new FakeWorkspaceService())),
+                    new ExportWindow(new ExportViewModel(new FakeWorkspaceService(), new FakeExportService(), new FakeFilePicker())),
+                    new ImportPreviewWindow(new ImportPreviewViewModel(new FakeImportService(), new FakeDialogs(), "unused.json")),
+                    new WorkspaceManagerWindow(new WorkspaceManagerViewModel(new FakeWorkspaceService(), new FakeDialogs())),
                 ];
                 foreach (var dialog in related)
                 {

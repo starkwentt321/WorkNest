@@ -13,16 +13,6 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService, IDisposable
     private const int WmHotkey = 0x0312;
     private const int HotkeyId = 1;
 
-    /// <summary>RegisterHotKey 的修饰键位（winuser.h 的 MOD_ 常量）。</summary>
-    [Flags]
-    private enum ModifierKeys : uint
-    {
-        Alt = 0x1,
-        Control = 0x2,
-        Shift = 0x4,
-        Win = 0x8,
-    }
-
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint virtualKey);
 
@@ -41,7 +31,8 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService, IDisposable
     public bool TryRegister(string gesture)
     {
         // 手势无效时不动现有注册：换键失败不应连带毁掉正在生效的旧热键
-        if (string.IsNullOrWhiteSpace(gesture) || !TryParseGesture(gesture, out var modifiers, out var virtualKey))
+        // （解析规则在平台层 HotkeyGesture，与设置页回显共用）
+        if (string.IsNullOrWhiteSpace(gesture) || !HotkeyGesture.TryParse(gesture, out var parsed))
         {
             return false;
         }
@@ -53,7 +44,7 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService, IDisposable
         {
             _window ??= new HotkeyWindow();
             _window.HotkeyRaised = () => HotkeyPressed?.Invoke(this, EventArgs.Empty);
-            if (!RegisterHotKey(_window.Handle, HotkeyId, modifiers, virtualKey))
+            if (!RegisterHotKey(_window.Handle, HotkeyId, (uint)parsed.Modifiers, parsed.VirtualKey))
             {
                 // 新组合被占用（典型：已被系统或其他程序注册）：立即恢复原组合，
                 // 保证旧热键不失效；恢复结果经 RegisteredGesture 供界面如实提示
@@ -78,8 +69,8 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService, IDisposable
     {
         if (previousGesture is null
             || _window is null
-            || !TryParseGesture(previousGesture, out var modifiers, out var virtualKey)
-            || !RegisterHotKey(_window.Handle, HotkeyId, modifiers, virtualKey))
+            || !HotkeyGesture.TryParse(previousGesture, out var parsed)
+            || !RegisterHotKey(_window.Handle, HotkeyId, (uint)parsed.Modifiers, parsed.VirtualKey))
         {
             _registered = false;
             _registeredGesture = null;
@@ -107,52 +98,6 @@ public sealed class GlobalHotkeyService : IGlobalHotkeyService, IDisposable
         Unregister();
         _window?.ReleaseHandle();
         _window = null;
-    }
-
-    /// <summary>
-    /// 解析 "Ctrl+Alt+W" 风格手势。修饰键支持 Ctrl/Control、Alt、Shift、Win/Windows；
-    /// 键位使用 WinForms.Keys 枚举名（其值与 Win32 虚拟键码一致，可直接作为 VK 传递）。
-    /// 要求至少一个修饰键 + 恰好一个非修饰键位，否则视为不支持。
-    /// </summary>
-    private static bool TryParseGesture(string gesture, out uint modifiers, out uint virtualKey)
-    {
-        modifiers = 0;
-        virtualKey = 0;
-        var hasKey = false;
-
-        foreach (var part in gesture.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
-        {
-            switch (part.ToLowerInvariant())
-            {
-                case "ctrl" or "control":
-                    modifiers |= (uint)ModifierKeys.Control;
-                    break;
-                case "alt":
-                    modifiers |= (uint)ModifierKeys.Alt;
-                    break;
-                case "shift":
-                    modifiers |= (uint)ModifierKeys.Shift;
-                    break;
-                case "win" or "windows":
-                    modifiers |= (uint)ModifierKeys.Win;
-                    break;
-                default:
-                    // 只允许一个键位；键位名必须能解析为 Keys 枚举（如 W、F1、D1、Oemtilde）
-                    if (hasKey
-                        || !Enum.TryParse(part, ignoreCase: true, out WinForms.Keys key)
-                        || key == WinForms.Keys.None)
-                    {
-                        return false;
-                    }
-
-                    virtualKey = (uint)key;
-                    hasKey = true;
-                    break;
-            }
-        }
-
-        // 不含修饰键的全局热键会劫持用户正常输入，不支持（手势约定为组合键）
-        return hasKey && modifiers != 0;
     }
 
     /// <summary>隐藏消息窗口：仅承载热键消息，从不显示；默认窗口类由 NativeWindow 注册。</summary>

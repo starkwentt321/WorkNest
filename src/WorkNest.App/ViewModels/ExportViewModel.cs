@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using WorkNest.Application.Abstractions;
 using WorkNest.Application.Dtos;
+using WorkNest.App.Services;
 
 namespace WorkNest.App.ViewModels;
 
@@ -15,15 +16,14 @@ public partial class ExportViewModel : ObservableObject
 {
     private readonly IWorkspaceService _workspaceService;
     private readonly IExportService _exportService;
+    private readonly IFilePicker _filePicker;
 
-    public ExportViewModel(IWorkspaceService workspaceService, IExportService exportService)
+    public ExportViewModel(IWorkspaceService workspaceService, IExportService exportService, IFilePicker filePicker)
     {
         _workspaceService = workspaceService;
         _exportService = exportService;
+        _filePicker = filePicker;
     }
-
-    /// <summary>弹窗归属（ExportWindow 构造时注入）。</summary>
-    internal System.Windows.Window? WindowOwner { get; set; }
 
     public ObservableCollection<ExportWorkspaceItem> Workspaces { get; } = [];
 
@@ -92,20 +92,14 @@ public partial class ExportViewModel : ObservableObject
     [RelayCommand]
     private void Browse()
     {
-        var dialog = new Microsoft.Win32.SaveFileDialog
-        {
-            Title = "选择导出位置",
-            Filter = "JSON 配置 (*.json)|*.json",
-            FileName = Path.GetFileName(ExportPath),
-        };
+        // 对话框细节（标题/过滤/存在性/初始目录）收口到 IFilePicker；初始目录仅在实际存在时生效
         var directory = Path.GetDirectoryName(ExportPath);
-        if (!string.IsNullOrEmpty(directory) && Directory.Exists(directory))
+        var path = _filePicker.PickSaveFile(
+            "选择导出位置", "JSON 配置 (*.json)|*.json", Path.GetFileName(ExportPath),
+            string.IsNullOrEmpty(directory) || !Directory.Exists(directory) ? null : directory);
+        if (path is not null)
         {
-            dialog.InitialDirectory = directory;
-        }
-        if (dialog.ShowDialog(WindowOwner) == true)
-        {
-            ExportPath = dialog.FileName;
+            ExportPath = path;
         }
     }
 

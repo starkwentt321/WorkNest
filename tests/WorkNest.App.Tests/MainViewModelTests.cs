@@ -22,11 +22,19 @@ public class MainViewModelTests
         FakeWorkspaceService Workspace,
         FakeResourceService Resource,
         FakeDialogs Dialogs,
-        FakeFilePicker Picker);
+        FakeFilePicker Picker,
+        FakeLauncherService Launcher);
 
     private static VmHarness CreateVm() => CreateVmCore([]);
 
-    private static VmHarness CreateVmCore(params WorkspaceDto[] initialOrder)
+    private static VmHarness CreateVmCore(params WorkspaceDto[] initialOrder) =>
+        BuildVm(250, initialOrder); // 250 = MainViewModel 生产默认防抖
+
+    /// <summary>防抖 0 重载：SearchText 变化同步重建视图（测试线程无消息泵路径）。</summary>
+    private static VmHarness CreateVmCore(int searchDebounceMilliseconds, params WorkspaceDto[] initialOrder) =>
+        BuildVm(searchDebounceMilliseconds, initialOrder);
+
+    private static VmHarness BuildVm(int searchDebounceMilliseconds, WorkspaceDto[] initialOrder)
     {
         var workspace = new FakeWorkspaceService();
         if (initialOrder.Length > 0)
@@ -34,24 +42,22 @@ public class MainViewModelTests
             workspace.EnqueueOrder(initialOrder);
         }
         var resource = new FakeResourceService();
+        var launcher = new FakeLauncherService();
         var dialogs = new FakeDialogs();
         var picker = new FakeFilePicker();
         var vm = new MainViewModel(
             workspace,
             resource,
-            new FakeLauncherService(),
+            launcher,
             new FakeSettingsService(),
             new FakeAutostartService(),
             new FakeBackupService(),
             new FakeIconProvider(),
-            new FakeHotkeyService(),
-            new FakeExportService(),
-            new FakeImportService(),
-            new FakeAppRestart(),
             dialogs,
             picker,
-            new FakeFolderBrowserService());
-        return new VmHarness(vm, workspace, resource, dialogs, picker);
+            new FakeFolderBrowserService(),
+            searchDebounceMilliseconds: searchDebounceMilliseconds);
+        return new VmHarness(vm, workspace, resource, dialogs, picker, launcher);
     }
 
     private static WorkspaceDto Workspace(int id, string name) =>
@@ -189,13 +195,16 @@ public class MainViewModelTests
 
         // 普通工作区视图：默认排序按置顶/频次重排 → A（置顶）在前（对照组）
         h.Vm.CurrentWorkspaceOption = new WorkspaceOptionViewModel(Workspace(W1Id, "工作区1"));
+        // 批次 B 性能改造后加载在后台线程执行：初始 Resources 为空，非空即本次加载已落地
+        await WaitUntilAsync(() => h.Vm.Resources.Count > 0);
         Assert.Equal([AId, BId], h.Vm.Resources.Select(r => r.Id));
         Assert.Equal([W1Id], h.Resource.ForWorkspaceCalls);
 
         // 进入最近使用视图：必须保持 GetRecentlyUsedAsync 的契约顺序 [B, A]，不被默认排序重排
         h.Vm.CurrentWorkspaceOption = WorkspaceOptionViewModel.RecentItem;
         Assert.True(h.Vm.IsRecentView);
-        await WaitUntilAsync(() => h.Resource.RecentlyUsedCalls.Count > 0);
+        // 等待最近视图加载落地（后台执行；服务端契约顺序 B 最前，首项变为 B 即完成）
+        await WaitUntilAsync(() => h.Vm.Resources.FirstOrDefault()?.Id == BId);
         Assert.Equal([(W1Id, 20)], h.Resource.RecentlyUsedCalls);
         Assert.Equal([BId, AId], h.Vm.Resources.Select(r => r.Id));
     }
@@ -238,5 +247,55 @@ public class MainViewModelTests
         Assert.False(h.Vm.AddWebsiteCommand.CanExecute(null));
         Assert.False(h.Vm.AddFileCommand.CanExecute(null));
         Assert.False(h.Vm.AddFolderCommand.CanExecute(null));
+    }
+
+    // ============ 搜索防抖 0：SearchText 变化同步重建视图（测试环境无消息泵路径） ============
+
+    [Fact]
+    public async Task SearchText_ZeroDebounce_FiltersResourcesSynchronously()
+    {
+        var h = CreateVmCore(searchDebounceMilliseconds: 0);
+        h.Resource.ForWorkspace = [B(), A()];
+        h.Vm.CurrentWorkspaceOption = new WorkspaceOptionViewModel(Workspace(W1Id, "工作区1"));
+        await WaitUntilAsync(() => h.Vm.Resources.Count > 0);
+        Assert.Equal([AId, BId], h.Vm.Resources.Select(r => r.Id));
+
+        // 不匹配关键词：0 防抖下输入即过滤，无需等待计时器
+        h.Vm.SearchText = "zzz不匹配zzz";
+        Assert.Empty(h.Vm.Resources);
+
+        // 匹配关键词：按名称命中保留，过滤结果立即可见
+        h.Vm.SearchText = "文档";
+        var visible = Assert.Single(h.Vm.Resources);
+        Assert.Equal(BId, visible.Id);
+    }
+
+    // ============ 启动成功：普通视图局部重排，与全量重载同序且不触发重载 ============
+
+    [Fact]
+    public async Task LaunchSuccess_NormalView_ReranksByDefaultSort_WithoutFullReload()
+    {
+        var h = CreateVm();
+        // 普通组内 RunCount 倒序：高频(6)在前，低频(5)在后
+        var lowRun = Resource(301, "低频", ResourceType.File, @"C:\docs\low.txt",
+            runCount: 5, lastUsedAt: new DateTime(2026, 9, 1, 8, 0, 0, DateTimeKind.Utc));
+        var highRun = Resource(302, "高频", ResourceType.File, @"C:\docs\high.txt",
+            runCount: 6, lastUsedAt: new DateTime(2026, 9, 5, 8, 0, 0, DateTimeKind.Utc));
+        h.Resource.ForWorkspace = [highRun, lowRun];
+        h.Vm.CurrentWorkspaceOption = new WorkspaceOptionViewModel(Workspace(W1Id, "工作区1"));
+        await WaitUntilAsync(() => h.Vm.Resources.Count > 0);
+        Assert.Equal([302, 301], h.Vm.Resources.Select(r => r.Id));
+
+        // 启动低频项：RunCount 追平 6，LastUsedAt 刷新为最新 → 默认排序应上移到普通组首位
+        var reloadCallsBefore = h.Resource.ForWorkspaceCalls.Count;
+        var launched = h.Vm.Resources.First(r => r.Id == 301);
+        h.Vm.LaunchCommand.Execute(launched);
+        await WaitUntilAsync(() => h.Vm.Resources.FirstOrDefault()?.Id == 301);
+
+        Assert.Equal([301, 302], h.Vm.Resources.Select(r => r.Id));
+        Assert.Equal(6, launched.Dto.RunCount);
+        // 局部更新语义锁定：不触发 GetForWorkspaceAsync 全量重载（重排结果与全量重载一致）
+        Assert.Equal(reloadCallsBefore, h.Resource.ForWorkspaceCalls.Count);
+        Assert.Equal([301], h.Launcher.LaunchedResourceIds);
     }
 }

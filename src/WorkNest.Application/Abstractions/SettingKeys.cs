@@ -3,13 +3,14 @@ namespace WorkNest.Application.Abstractions;
 /// <summary>AppSetting 键名约定；值以 JSON 序列化保存。</summary>
 public static class SettingKeys
 {
+    public const string ResourceListPreferences = "ui.resourceListPreferences";
     /// <summary>关闭按钮行为：true = 隐藏到托盘（首次默认），false = 直接退出。</summary>
     public const string CloseToTray = "behavior.closeToTray";
 
     /// <summary>主题："light" / "dark"。</summary>
     public const string Theme = "ui.theme";
 
-    /// <summary>背景图片路径和透明度百分比；空路径使用内置图片。</summary>
+    /// <summary>背景图片 JSON 对象：路径、透明度百分比与显示方式；空路径使用内置图片。</summary>
     public const string BackgroundImage = "ui.backgroundImage";
 
     /// <summary>全局呼出快捷键，如 "Ctrl+Alt+W"。</summary>
@@ -29,9 +30,6 @@ public static class SettingKeys
 
     /// <summary>主窗口位置与尺寸（JSON：X/Y/W/H/State）。</summary>
     public const string WindowBounds = "state.windowBounds";
-
-    /// <summary>资源列表视图偏好（JSON：列宽/顺序/显隐/排序列）。</summary>
-    public const string ViewPreference = "state.viewPreference";
 
     /// <summary>会话收尾标志（F24/决策 99）：正常退出写 true，启动时读到 false 即视为上次异常退出，随后立即写 false 布防。</summary>
     public const string SessionCleanExit = "state.sessionCleanExit";

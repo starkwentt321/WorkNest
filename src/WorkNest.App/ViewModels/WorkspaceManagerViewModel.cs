@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using WorkNest.Application.Abstractions;
 using WorkNest.Application.Validation;
 using WorkNest.App.Media;
+using WorkNest.App.Services;
 
 namespace WorkNest.App.ViewModels;
 
@@ -16,10 +17,12 @@ namespace WorkNest.App.ViewModels;
 public partial class WorkspaceManagerViewModel : ObservableObject
 {
     private readonly IWorkspaceService _workspaceService;
+    private readonly IAppDialogs _dialogs;
 
-    public WorkspaceManagerViewModel(IWorkspaceService workspaceService)
+    public WorkspaceManagerViewModel(IWorkspaceService workspaceService, IAppDialogs dialogs)
     {
         _workspaceService = workspaceService;
+        _dialogs = dialogs;
     }
 
     public ObservableCollection<WorkspaceOptionViewModel> Workspaces { get; } = [];
@@ -123,9 +126,9 @@ public partial class WorkspaceManagerViewModel : ObservableObject
         {
             return;
         }
-        // 删除确认并列出资源数（7.2：共享资源不受影响）
+        // 删除确认并列出资源数（7.2：共享资源不受影响）；模态归属由 IAppDialogs 实现内解析
         var message = $"确定删除工作区“{ws.Name}”吗？\n其中 {ws.ResourceCount} 个资源关联将一并移除；被多个工作区共享的资源在其他工作区仍保留。";
-        if (MessageBox.Show(message, "删除工作区", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        if (!_dialogs.Confirm("删除工作区", message, MessageBoxImage.Warning))
         {
             return;
         }

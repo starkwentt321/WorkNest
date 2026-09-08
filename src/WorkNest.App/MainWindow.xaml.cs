@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using Microsoft.Win32;
 using WorkNest.App.Services;
 using WorkNest.App.ViewModels;
 using WorkNest.App.Views;
@@ -27,12 +26,20 @@ public partial class MainWindow : Window
 
     public BackgroundImageSettings BackgroundSettings { get; }
 
-    public MainWindow(MainViewModel viewModel, BackgroundImageSettings backgroundSettings)
+    private readonly Win32FilePicker _filePicker = new();
+
+    // 设置窗口 VM 每次打开都取新实例（DI 瞬时），避免残留上次的界面状态
+    private readonly Func<SettingsViewModel> _settingsViewModelFactory;
+
+    public MainWindow(MainViewModel viewModel, BackgroundImageSettings backgroundSettings,
+        Func<SettingsViewModel> settingsViewModelFactory)
     {
         BackgroundSettings = backgroundSettings;
+        _settingsViewModelFactory = settingsViewModelFactory;
         InitializeComponent();
         ViewModel = viewModel;
         DataContext = viewModel; // 组合根约定：public 属性名 ViewModel
+        InitializeListExperience();
 
         // 窗口按当前主题渲染（InitializeAsync 后按设置覆盖，默认浅色）
         Themes.ThemeManager.Apply(this, Themes.ThemeManager.CurrentTheme);
@@ -142,7 +149,7 @@ public partial class MainWindow : Window
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        var window = new SettingsWindow(ViewModel.CreateSettingsViewModel(), BackgroundSettings) { Owner = this };
+        var window = new SettingsWindow(_settingsViewModelFactory(), BackgroundSettings) { Owner = this };
         window.ShowDialog();
         // 导入配置可能改变工作区与资源；恢复备份走整进程重启，无需在此处理。
         // 刷新下拉与重载资源必须顺序执行，并发触发会互相竞争当前选择（R07）
@@ -276,7 +283,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                FolderItemOps.ShowInExplorer(selected[0].FullPath);
+                FolderItemOps.RevealInExplorer(selected[0].FullPath);
             }
             catch (Exception ex)
             {
@@ -439,18 +446,18 @@ public partial class MainWindow : Window
         }
         if (panel.Type == ResourceType.Directory)
         {
-            var dialog = new OpenFolderDialog { Title = "选择文件夹" };
-            if (dialog.ShowDialog(this) == true)
+            var folder = _filePicker.PickFolder("选择文件夹", this);
+            if (folder is not null)
             {
-                panel.Target = dialog.FolderName;
+                panel.Target = folder;
             }
         }
         else
         {
-            var dialog = new OpenFileDialog { Title = "选择文件", CheckFileExists = true };
-            if (dialog.ShowDialog(this) == true)
+            var file = _filePicker.PickFile("选择文件", filter: null, owner: this);
+            if (file is not null)
             {
-                panel.Target = dialog.FileName;
+                panel.Target = file;
             }
         }
     }
@@ -462,10 +469,10 @@ public partial class MainWindow : Window
         {
             return;
         }
-        var dialog = new OpenFolderDialog { Title = "选择工作目录" };
-        if (dialog.ShowDialog(this) == true)
+        var folder = _filePicker.PickFolder("选择工作目录", this);
+        if (folder is not null)
         {
-            panel.WorkingDirectory = dialog.FolderName;
+            panel.WorkingDirectory = folder;
         }
     }
 

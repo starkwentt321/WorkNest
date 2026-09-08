@@ -60,9 +60,18 @@ public sealed class ImportService : IImportService
                 "请使用匹配版本的 WorkNest 重新导出。");
         }
 
+        // 与 WorkspaceService 查重/DeduplicateNameAsync 同口径：忽略大小写，
+        // 否则 "Work"/"WORK" 预览判无冲突、执行时 CreateAsync 才报同名失败
         var existingNames = (await _workspaceRepository.GetAllAsync())
             .Select(w => w.Name)
-            .ToHashSet(StringComparer.Ordinal);
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // 批量查重：一次性取回全部唯一键在内存比对，替代循环内逐条查询
+        // （几千条导入时逐条 await 是预览卡顿主因）。比对口径与 FindByKeyAsync 的 SQL 语义一致：
+        // Type 精确相同 + Target NOCASE 相同（Target 大写归一）+ Arguments/WorkingDirectory 归一空串后精确相同
+        var existingKeys = (await _resourceRepository.GetAllKeysAsync())
+            .Select(k => LookupKey(k.Type, k.Target, k.Arguments, k.WorkingDirectory))
+            .ToHashSet();
 
         var previews = new List<ImportWorkspacePreview>();
         foreach (var workspace in root.Workspaces)
@@ -79,13 +88,13 @@ public sealed class ImportService : IImportService
                 }
 
                 // 统计口径与执行一致：唯一键命中即复用，未命中即新建（只统计不落库）
-                if (await _resourceRepository.FindByKeyAsync(key) is null)
+                if (existingKeys.Contains(LookupKey(key.Type, key.Target, key.Arguments, key.WorkingDirectory)))
                 {
-                    newCount++;
+                    reuseCount++;
                 }
                 else
                 {
-                    reuseCount++;
+                    newCount++;
                 }
             }
 
@@ -104,7 +113,6 @@ public sealed class ImportService : IImportService
         {
             FilePath = filePath,
             SchemaVersion = root.SchemaVersion,
-            ExportedAt = root.ExportedAt,
             Workspaces = previews,
         };
     }
@@ -175,6 +183,16 @@ public sealed class ImportService : IImportService
 
         return addedLinks;
     }
+
+    /// <summary>
+    /// 唯一键归一为比对元组：Type 精确、Target 大写归一按 ASCII 折叠对齐 SQLite COLLATE NOCASE，
+    /// 非 ASCII 大小写差异（如 ü/Ü）预览可能多报复用（方向单一，无数据损坏）；
+    /// Arguments/WorkingDirectory 归一空串。参数比较保持精确（SQL 侧无 COLLATE 声明即 BINARY），
+    /// 不做整串大小写折叠。
+    /// </summary>
+    private static (int Type, string TargetUpper, string Arguments, string WorkingDirectory) LookupKey(
+        ResourceType type, string target, string? arguments, string? workingDirectory) =>
+        ((int)type, target.ToUpperInvariant(), arguments ?? string.Empty, workingDirectory ?? string.Empty);
 
     /// <summary>解析单条导入资源为唯一键；类型未知或目标无法规范化时返回 false（计入无效数）。</summary>
     private static bool TryResolveKey(ExportedResource resource, out ResourceKey key)

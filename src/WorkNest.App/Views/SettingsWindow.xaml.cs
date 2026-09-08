@@ -1,5 +1,5 @@
 using System.Windows;
-using Microsoft.Win32;
+using WorkNest.App.Services;
 using WorkNest.App.Themes;
 using WorkNest.App.ViewModels;
 
@@ -11,13 +11,14 @@ public partial class SettingsWindow : Window
     public SettingsViewModel ViewModel { get; }
     public WorkNest.App.Services.BackgroundImageSettings BackgroundSettings { get; }
 
+    private readonly Win32FilePicker _filePicker = new();
+
     public SettingsWindow(SettingsViewModel viewModel, WorkNest.App.Services.BackgroundImageSettings backgroundSettings)
     {
         BackgroundSettings = backgroundSettings;
         InitializeComponent();
         ViewModel = viewModel;
         DataContext = viewModel;
-        ViewModel.WindowOwner = this; // MessageBox/文件对话框保持模态归属
         ViewModel.RequestExport += OnRequestExport;
         ViewModel.RequestImport += OnRequestImport;
         ThemeManager.Apply(this, ThemeManager.CurrentTheme);
@@ -26,14 +27,12 @@ public partial class SettingsWindow : Window
 
     private void ChooseBackground_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog
+        var path = _filePicker.PickFile("选择背景图片",
+            "图片文件 (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif", this);
+        if (path is not null)
         {
-            Title = "选择背景图片",
-            Filter = "图片文件 (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif",
-            CheckFileExists = true,
-        };
-        if (dialog.ShowDialog(this) == true)
-            BackgroundSettings.ImagePath = dialog.FileName;
+            BackgroundSettings.ImagePath = path;
+        }
     }
 
     /// <summary>导出配置（F11）：打开导出对话框；完成后无需刷新主窗口。</summary>
@@ -47,18 +46,13 @@ public partial class SettingsWindow : Window
     /// <summary>导入配置（F11）：选文件 → 预览对话框；导入成功后刷新备份列表回显。</summary>
     private void OnRequestImport(object? sender, EventArgs e)
     {
-        var dialog = new OpenFileDialog
-        {
-            Title = "选择要导入的 WorkNest 配置文件",
-            Filter = "JSON 配置 (*.json)|*.json",
-            CheckFileExists = true,
-        };
-        if (dialog.ShowDialog(this) != true)
+        var path = _filePicker.PickFile("选择要导入的 WorkNest 配置文件", "JSON 配置 (*.json)|*.json", this);
+        if (path is null)
         {
             return;
         }
 
-        var viewModel = ViewModel.CreateImportPreviewViewModel(dialog.FileName);
+        var viewModel = ViewModel.CreateImportPreviewViewModel(path);
         var window = new ImportPreviewWindow(viewModel) { Owner = this };
         window.ShowDialog();
     }

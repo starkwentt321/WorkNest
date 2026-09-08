@@ -53,7 +53,9 @@ public sealed class DebouncedBackupScheduler : IDisposable
     private async Task FireAsync()
     {
         // 挂起期间到期的快照直接跳过：该阶段数据库文件正在被替换，快照既不安全也无意义；
-        // 解除后不补拍，恢复流程自身已有 pre-restore 快照兜底
+        // 解除后不补拍，恢复流程自身已有 pre-restore 快照兜底。
+        // 残余窗口：计时在 Suspend 生效前一刻到期并已开始快照的执行不可被挂起中断
+        // （毫秒级 TOCTOU，主库有 pre-restore 快照兜底）
         if (Volatile.Read(ref _suspendCount) > 0)
         {
             return;

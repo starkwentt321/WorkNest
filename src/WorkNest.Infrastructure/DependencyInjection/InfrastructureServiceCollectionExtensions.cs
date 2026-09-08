@@ -39,13 +39,14 @@ public static class InfrastructureServiceCollectionExtensions
         // 迁移前备份必须与设置页使用同一备份目录，否则迁移备份在设置页不可见
         services.AddSingleton(sp => new DbMigrator(
             sp.GetRequiredService<WorkNestDb>(),
-            new IMigration[] { new Migration0001InitialSchema() },
+            new IMigration[] { new Migration0001InitialSchema(), new Migration0002DropViewPreferenceAndAddResourceIndex() },
             backupsDir));
         services.AddSingleton<IWorkspaceRepository, SqliteWorkspaceRepository>();
         services.AddSingleton<IResourceRepository, SqliteResourceRepository>();
         services.AddSingleton<ISettingsRepository, SqliteSettingsRepository>();
-        services.AddSingleton<IBackupService>(_ => new SqliteBackupService(
-            new WorkNestDb(dbPath), backupsDir));
+        // 备份服务复用已注册的 WorkNestDb 单例（连接工厂无状态），不再重复装配 dbPath
+        services.AddSingleton<IBackupService>(sp => new SqliteBackupService(
+            sp.GetRequiredService<WorkNestDb>(), backupsDir));
 
         return services;
     }

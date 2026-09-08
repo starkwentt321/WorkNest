@@ -21,8 +21,6 @@ public sealed class FakeWorkspaceService : IWorkspaceService
     /// <summary>追加一段返回脚本；按调用顺序依次生效。</summary>
     public void EnqueueOrder(params WorkspaceDto[] dtos) => _script.Enqueue(dtos);
 
-    public WorkspaceSortMode CurrentSortMode => WorkspaceSortMode.LastUsed;
-
     public Task<IReadOnlyList<WorkspaceDto>> GetOrderedAsync()
     {
         GetOrderedCallCount++;
@@ -51,6 +49,8 @@ public sealed class FakeWorkspaceService : IWorkspaceService
 /// </summary>
 public sealed class FakeResourceService : IResourceService
 {
+    public Func<int, Task<IReadOnlyList<ResourceDto>>>? LoadWorkspace { get; set; }
+    public IReadOnlyList<ResourceDto> AllWorkspaces { get; set; } = [];
     /// <summary>普通视图预设数据（服务端契约顺序）。</summary>
     public IReadOnlyList<ResourceDto> ForWorkspace { get; set; } = [];
 
@@ -70,11 +70,11 @@ public sealed class FakeResourceService : IResourceService
     public Task<IReadOnlyList<ResourceDto>> GetForWorkspaceAsync(int workspaceId)
     {
         ForWorkspaceCalls.Add(workspaceId);
-        return Task.FromResult(ForWorkspace);
+        return LoadWorkspace?.Invoke(workspaceId) ?? Task.FromResult(ForWorkspace);
     }
 
     public Task<IReadOnlyList<ResourceDto>> GetAllWorkspacesAsync() =>
-        Task.FromResult<IReadOnlyList<ResourceDto>>([]);
+        Task.FromResult(AllWorkspaces);
 
     public Task<ResourceDto> AddAsync(ResourceEditInput input)
     {

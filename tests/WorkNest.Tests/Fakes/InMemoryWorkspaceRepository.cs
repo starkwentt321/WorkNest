@@ -46,23 +46,22 @@ public sealed class InMemoryWorkspaceRepository : IWorkspaceRepository
         return Task.CompletedTask;
     }
 
-    public Task TouchLastUsedAsync(int id, DateTime utc)
-    {
-        var workspace = _workspaces.FirstOrDefault(w => w.Id == id);
-        if (workspace is not null)
-        {
-            workspace.LastUsedAt = utc;
-        }
-
-        return Task.CompletedTask;
-    }
-
     public Task<int> GetResourceCountAsync(int workspaceId) =>
         Task.FromResult(_links.Count(l => l.WorkspaceId == workspaceId));
 
     /// <summary>测试种子：直接注入关联行（真实库中由 AddLinkAsync 写入）。</summary>
     public void SeedLink(int workspaceId, int resourceId) =>
         _links.Add(new WorkspaceResource { WorkspaceId = workspaceId, ResourceId = resourceId });
+
+    /// <summary>测试种子：直接设置最近使用时间（镜像真实库中成功启动写入 Workspace.LastUsedAt 的效果）。</summary>
+    public void SeedLastUsed(int id, DateTime utc)
+    {
+        var workspace = _workspaces.FirstOrDefault(w => w.Id == id);
+        if (workspace is not null)
+        {
+            workspace.LastUsedAt = utc;
+        }
+    }
 
     private static Workspace Clone(Workspace w) => new()
     {

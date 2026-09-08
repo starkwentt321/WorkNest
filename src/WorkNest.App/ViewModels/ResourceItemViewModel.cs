@@ -12,7 +12,8 @@ namespace WorkNest.App.ViewModels;
 /// </summary>
 public partial class ResourceItemViewModel : ObservableObject
 {
-    public ResourceDto Dto { get; }
+    /// <summary>行数据；启动成功后的局部记账会整体替换实例（DTO 属性 init-only），展示属性不受影响。</summary>
+    public ResourceDto Dto { get; private set; }
 
     public int Id => Dto.Id;
 
@@ -36,9 +37,6 @@ public partial class ResourceItemViewModel : ObservableObject
     /// <summary>类型默认图标字形（Segoe Fluent Icons）。</summary>
     public string TypeGlyph { get; }
 
-    /// <summary>网站没有“所在位置”，禁用相关入口（F19/决策 52）。</summary>
-    public bool CanOpenLocation => Type != ResourceType.Website;
-
     /// <summary>标签展示串（逗号分隔）。</summary>
     public string TagsDisplay => string.Join(", ", Dto.Tags);
 
@@ -55,7 +53,34 @@ public partial class ResourceItemViewModel : ObservableObject
         _isInvalid = !dto.PathExists;
     }
 
-    public static ResourceItemViewModel Create(ResourceDto dto, IResourceIconProvider? iconProvider) => new(dto, iconProvider);
+    /// <summary>
+    /// 启动/内联打开成功后的局部记账：RunCount+1、最近使用时间刷新、目标判定为存在。
+    /// DTO 属性 init-only，重建实例替换；统计字段无 UI 绑定（仅参与排序，由 RebuildView 重算），无需逐属性通知。
+    /// </summary>
+    public void ApplySuccessfulLaunch(DateTime utcNow)
+    {
+        var d = Dto;
+        Dto = new ResourceDto
+        {
+            Id = d.Id,
+            Type = d.Type,
+            Name = d.Name,
+            Target = d.Target,
+            Arguments = d.Arguments,
+            WorkingDirectory = d.WorkingDirectory,
+            Tags = d.Tags,
+            IsPinned = d.IsPinned,
+            LinkSortOrder = d.LinkSortOrder,
+            RunCount = d.RunCount + 1,
+            LastUsedAt = utcNow,
+            WorkspaceIds = d.WorkspaceIds,
+            PathExists = true, // 成功使用即目标可达，与全量重载后的失效判定口径一致
+        };
+        if (IsInvalid)
+        {
+            IsInvalid = false; // 联动清除失效标记（内部带 DisplayName 通知）
+        }
+    }
 
     partial void OnIsInvalidChanged(bool value) => OnPropertyChanged(nameof(DisplayName));
 

@@ -14,7 +14,6 @@ public partial class ExportWindow : Window
         InitializeComponent();
         ViewModel = viewModel;
         DataContext = viewModel;
-        ViewModel.WindowOwner = this;
         ThemeManager.Apply(this, ThemeManager.CurrentTheme);
         Loaded += async (_, _) => await ViewModel.LoadAsync();
     }

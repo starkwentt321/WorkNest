@@ -44,10 +44,6 @@ public class DropAddTests : IDisposable
             new FakeAutostartService(),
             new FakeBackupService(),
             new FakeIconProvider(),
-            new FakeHotkeyService(),
-            new FakeExportService(),
-            new FakeImportService(),
-            new FakeAppRestart(),
             new FakeDialogs(),
             new FakeFilePicker(),
             new FakeFolderBrowserService());
